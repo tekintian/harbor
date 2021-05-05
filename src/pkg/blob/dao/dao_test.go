@@ -15,11 +15,13 @@
 package dao
 
 import (
-	"testing"
-
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/blob/models"
 	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/stretchr/testify/suite"
+	"testing"
+	"time"
 )
 
 type DaoTestSuite struct {
@@ -120,6 +122,7 @@ func (suite *DaoTestSuite) TestGetBlobByDigest() {
 	blob, err = suite.dao.GetBlobByDigest(ctx, digest)
 	if suite.Nil(err) {
 		suite.Equal(digest, blob.Digest)
+		suite.Equal(models.StatusNone, blob.Status)
 	}
 }
 
@@ -129,19 +132,65 @@ func (suite *DaoTestSuite) TestUpdateBlob() {
 	digest := suite.DigestString()
 
 	suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest})
-
 	blob, err := suite.dao.GetBlobByDigest(ctx, digest)
 	if suite.Nil(err) {
 		suite.Equal(int64(0), blob.Size)
 	}
 
 	blob.Size = 100
-
 	if suite.Nil(suite.dao.UpdateBlob(ctx, blob)) {
 		blob, err := suite.dao.GetBlobByDigest(ctx, digest)
 		if suite.Nil(err) {
 			suite.Equal(int64(100), blob.Size)
+			suite.Equal(int64(0), blob.Version)
 		}
+	}
+
+	blob.Status = "deleting"
+	suite.Nil(suite.dao.UpdateBlob(ctx, blob), "cannot be updated.")
+	blob, err = suite.dao.GetBlobByDigest(ctx, digest)
+	if suite.Nil(err) {
+		suite.Equal(int64(0), blob.Version)
+		suite.Equal(models.StatusNone, blob.Status)
+	}
+}
+
+func (suite *DaoTestSuite) TestUpdateBlobStatus() {
+	ctx := suite.Context()
+
+	digest := suite.DigestString()
+
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest})
+	blob, err := suite.dao.GetBlobByDigest(ctx, digest)
+	if suite.Nil(err) {
+		suite.Equal(int64(0), blob.Size)
+	}
+
+	// StatusNone cannot be updated to StatusDeleting directly
+	blob.Status = models.StatusDeleting
+	count, err := suite.dao.UpdateBlobStatus(ctx, blob)
+	suite.Nil(err)
+	suite.Equal(int64(0), count)
+
+	blob.Status = models.StatusDelete
+	count, err = suite.dao.UpdateBlobStatus(ctx, blob)
+	suite.Nil(err)
+	suite.Equal(int64(1), count)
+
+	blob.Status = models.StatusDeleting
+	count, err = suite.dao.UpdateBlobStatus(ctx, blob)
+	suite.Nil(err)
+	suite.Equal(int64(1), count)
+
+	blob.Status = models.StatusDeleteFailed
+	count, err = suite.dao.UpdateBlobStatus(ctx, blob)
+	suite.Nil(err)
+	suite.Equal(int64(1), count)
+
+	blob, err = suite.dao.GetBlobByDigest(ctx, digest)
+	if suite.Nil(err) {
+		suite.Equal(int64(3), blob.Version)
+		suite.Equal(models.StatusDeleteFailed, blob.Status)
 	}
 }
 
@@ -154,19 +203,61 @@ func (suite *DaoTestSuite) TestListBlobs() {
 	digest2 := suite.DigestString()
 	suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest2})
 
-	blobs, err := suite.dao.ListBlobs(ctx, models.ListParams{BlobDigests: []string{digest1}})
+	ol := q.OrList{
+		Values: []interface{}{
+			digest1,
+		},
+	}
+	blobs, err := suite.dao.ListBlobs(ctx, q.New(q.KeyWords{"digest": &ol}))
 	if suite.Nil(err) {
 		suite.Len(blobs, 1)
 	}
 
-	blobs, err = suite.dao.ListBlobs(ctx, models.ListParams{BlobDigests: []string{digest1, digest2}})
+	ol = q.OrList{
+		Values: []interface{}{
+			digest1,
+			digest2,
+		},
+	}
+	blobs, err = suite.dao.ListBlobs(ctx, q.New(q.KeyWords{"digest": &ol}))
 	if suite.Nil(err) {
 		suite.Len(blobs, 2)
 	}
+
+	rg := q.Range{
+		Max: time.Now().Add(-time.Hour).Format(time.RFC3339),
+	}
+	blobs, err = suite.dao.ListBlobs(ctx, q.New(q.KeyWords{"update_time": &rg}))
+	if suite.Nil(err) {
+		suite.Len(blobs, 0)
+	}
+
+	digest3 := suite.DigestString()
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest3, UpdateTime: time.Now().Add(-time.Hour * 2)})
+	blobs, err = suite.dao.ListBlobs(ctx, q.New(q.KeyWords{"update_time": &rg}))
+	if suite.Nil(err) {
+		suite.Len(blobs, 1)
+	}
+
 }
 
 func (suite *DaoTestSuite) TestListBlobsAssociatedWithArtifact() {
 
+}
+
+func (suite *DaoTestSuite) TestSumBlobsSize() {
+	ctx := suite.Context()
+
+	size1, err := suite.dao.SumBlobsSize(ctx, true)
+	suite.Nil(err)
+
+	digest1 := suite.DigestString()
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest1, Size: 999})
+
+	size2, err := suite.dao.SumBlobsSize(ctx, true)
+	suite.Nil(err)
+
+	suite.Equal(int64(999), size2-size1)
 }
 
 func (suite *DaoTestSuite) TestFindBlobsShouldUnassociatedWithProject() {
@@ -188,15 +279,17 @@ func (suite *DaoTestSuite) TestFindBlobsShouldUnassociatedWithProject() {
 		digest4 := suite.DigestString()
 		digest5 := suite.DigestString()
 
+		var ol q.OrList
 		blobDigests := []string{digest1, digest2, digest3, digest4, digest5}
 		for _, digest := range blobDigests {
 			blobID, err := suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest})
 			if suite.Nil(err) {
 				suite.dao.CreateProjectBlob(ctx, projectID, blobID)
 			}
+			ol.Values = append(ol.Values, digest)
 		}
 
-		blobs, err := suite.dao.ListBlobs(ctx, models.ListParams{BlobDigests: blobDigests})
+		blobs, err := suite.dao.ListBlobs(ctx, q.New(q.KeyWords{"digest": &ol}))
 		suite.Nil(err)
 		suite.Len(blobs, 5)
 
@@ -320,6 +413,48 @@ func (suite *DaoTestSuite) TestDeleteProjectBlob() {
 		suite.Nil(err)
 		suite.True(exist)
 	}
+}
+
+func (suite *DaoTestSuite) TestDelete() {
+	ctx := suite.Context()
+
+	err := suite.dao.DeleteBlob(ctx, 100021)
+	suite.Require().NotNil(err)
+	suite.True(errors.IsErr(err, errors.NotFoundCode))
+
+	digest := suite.DigestString()
+	id, err := suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest})
+	suite.Nil(err)
+	err = suite.dao.DeleteBlob(ctx, id)
+	suite.Require().Nil(err)
+}
+
+func (suite *DaoTestSuite) TestGetBlobsNotRefedByProjectBlob() {
+	ctx := suite.Context()
+
+	blobs, err := suite.dao.GetBlobsNotRefedByProjectBlob(ctx, 0)
+	suite.Require().Nil(err)
+	beforeAdd := len(blobs)
+
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: suite.DigestString()})
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: suite.DigestString()})
+	digest := suite.DigestString()
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: digest})
+
+	blob, err := suite.dao.GetBlobByDigest(ctx, digest)
+	suite.Nil(err)
+
+	projectID := int64(1)
+	_, err = suite.dao.CreateProjectBlob(ctx, projectID, blob.ID)
+	suite.Nil(err)
+
+	blobs, err = suite.dao.GetBlobsNotRefedByProjectBlob(ctx, 0)
+	suite.Require().Nil(err)
+	suite.Require().Equal(2+beforeAdd, len(blobs))
+
+	blobs, err = suite.dao.GetBlobsNotRefedByProjectBlob(ctx, 2)
+	suite.Require().Nil(err)
+	suite.Require().Equal(0, len(blobs))
 }
 
 func TestDaoTestSuite(t *testing.T) {

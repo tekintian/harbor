@@ -1,6 +1,6 @@
 version: 0.1
 log:
-  level: {{log_level}}
+  level: {{level}}
   fields:
     service: registry
 storage:
@@ -17,7 +17,16 @@ storage:
     disable: true
 {% endif %}
 redis:
-  addr: {{redis_host}}:{{redis_port}}
+{% if sentinel_master_set %}
+  # sentinel hosts with comma
+  addr: {{redis_host}}
+  sentinelMasterSet: {{sentinel_master_set}}
+{% else %}
+  addr: {{redis_host}}
+{% endif %}
+  readtimeout: 10s
+  writetimeout: 10s
+  dialtimeout: 10s
   password: {{redis_password}}
   db: {{redis_db_index_reg}}
 http:
@@ -32,7 +41,14 @@ http:
 {% endif %}
   secret: placeholder
   debug:
+{% if metric.enabled %}
+    addr: :{{ metric.port }}
+    prometheus:
+      enabled: true
+      path: {{ metric.path }}
+{% else %}
     addr: localhost:5001
+{% endif %}
 auth:
   htpasswd:
     realm: harbor-registry-basic-realm

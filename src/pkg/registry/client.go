@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/goharbor/harbor/src/lib/config"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -32,7 +33,6 @@ import (
 	"github.com/docker/distribution/manifest/schema1"
 	"github.com/docker/distribution/manifest/schema2"
 	commonhttp "github.com/goharbor/harbor/src/common/http"
-	"github.com/goharbor/harbor/src/core/config"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/registry/auth"
@@ -72,7 +72,7 @@ type Client interface {
 	// ListTags lists the tags under the specified repository
 	ListTags(repository string) (tags []string, err error)
 	// ManifestExist checks the existence of the manifest
-	ManifestExist(repository, reference string) (exist bool, digest string, err error)
+	ManifestExist(repository, reference string) (exist bool, desc *distribution.Descriptor, err error)
 	// PullManifest pulls the specified manifest
 	PullManifest(repository, reference string, acceptedMediaTypes ...string) (manifest distribution.Manifest, digest string, err error)
 	// PushManifest pushes the specified manifest
@@ -93,6 +93,8 @@ type Client interface {
 	// is used to specify whether the destination artifact will be overridden if
 	// its name is same with source but digest isn't
 	Copy(srcRepository, srcReference, dstRepository, dstReference string, override bool) (err error)
+	// Do send generic HTTP requests to the target registry service
+	Do(req *http.Request) (*http.Response, error)
 }
 
 // NewClient creates a registry client with the default authorizer which determines the auth scheme
@@ -240,10 +242,10 @@ func (c *client) listTags(url string) ([]string, string, error) {
 	return tgs.Tags, next(resp.Header.Get("Link")), nil
 }
 
-func (c *client) ManifestExist(repository, reference string) (bool, string, error) {
+func (c *client) ManifestExist(repository, reference string) (bool, *distribution.Descriptor, error) {
 	req, err := http.NewRequest(http.MethodHead, buildManifestURL(c.url, repository, reference), nil)
 	if err != nil {
-		return false, "", err
+		return false, nil, err
 	}
 	for _, mediaType := range accepts {
 		req.Header.Add(http.CanonicalHeaderKey("Accept"), mediaType)
@@ -251,12 +253,16 @@ func (c *client) ManifestExist(repository, reference string) (bool, string, erro
 	resp, err := c.do(req)
 	if err != nil {
 		if errors.IsErr(err, errors.NotFoundCode) {
-			return false, "", nil
+			return false, nil, nil
 		}
-		return false, "", err
+		return false, nil, err
 	}
 	defer resp.Body.Close()
-	return true, resp.Header.Get(http.CanonicalHeaderKey("Docker-Content-Digest")), nil
+	dig := resp.Header.Get(http.CanonicalHeaderKey("Docker-Content-Digest"))
+	contentType := resp.Header.Get(http.CanonicalHeaderKey("Content-Type"))
+	contentLen := resp.Header.Get(http.CanonicalHeaderKey("Content-Length"))
+	len, _ := strconv.Atoi(contentLen)
+	return true, &distribution.Descriptor{Digest: digest.Digest(dig), MediaType: contentType, Size: int64(len)}, nil
 }
 
 func (c *client) PullManifest(repository, reference string, acceptedMediaTypes ...string) (
@@ -308,7 +314,7 @@ func (c *client) DeleteManifest(repository, reference string) error {
 	_, err := digest.Parse(reference)
 	if err != nil {
 		// the reference is tag, get the digest first
-		exist, digest, err := c.ManifestExist(repository, reference)
+		exist, desc, err := c.ManifestExist(repository, reference)
 		if err != nil {
 			return err
 		}
@@ -316,7 +322,7 @@ func (c *client) DeleteManifest(repository, reference string) error {
 			return errors.New(nil).WithCode(errors.NotFoundCode).
 				WithMessage("%s:%s not found", repository, reference)
 		}
-		reference = digest
+		reference = string(desc.Digest)
 	}
 	req, err := http.NewRequest(http.MethodDelete, buildManifestURL(c.url, repository, reference), nil)
 	if err != nil {
@@ -351,16 +357,24 @@ func (c *client) PullBlob(repository, digest string) (int64, io.ReadCloser, erro
 	if err != nil {
 		return 0, nil, err
 	}
+
+	req.Header.Add(http.CanonicalHeaderKey("Accept-Encoding"), "identity")
 	resp, err := c.do(req)
 	if err != nil {
 		return 0, nil, err
 	}
+
+	var size int64
 	n := resp.Header.Get(http.CanonicalHeaderKey("Content-Length"))
-	size, err := strconv.ParseInt(n, 10, 64)
-	if err != nil {
-		defer resp.Body.Close()
-		return 0, nil, err
+	// no content-length is acceptable, which can taken from manifests
+	if len(n) > 0 {
+		size, err = strconv.ParseInt(n, 10, 64)
+		if err != nil {
+			defer resp.Body.Close()
+			return 0, nil, err
+		}
 	}
+
 	return size, resp.Body, nil
 }
 
@@ -440,13 +454,13 @@ func (c *client) Copy(srcRepo, srcRef, dstRepo, dstRef string, override bool) er
 	}
 
 	// check the existence of the artifact on the destination repository
-	exist, dstDgt, err := c.ManifestExist(dstRepo, dstRef)
+	exist, desc, err := c.ManifestExist(dstRepo, dstRef)
 	if err != nil {
 		return err
 	}
 	if exist {
 		// the same artifact already exists
-		if srcDgt == dstDgt {
+		if desc != nil && srcDgt == string(desc.Digest) {
 			return nil
 		}
 		// the same name artifact exists, but not allowed to override
@@ -496,6 +510,10 @@ func (c *client) Copy(srcRepo, srcRef, dstRepo, dstRef string, override bool) er
 	}
 
 	return nil
+}
+
+func (c *client) Do(req *http.Request) (*http.Response, error) {
+	return c.do(req)
 }
 
 func (c *client) do(req *http.Request) (*http.Response, error) {

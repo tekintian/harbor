@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/goharbor/harbor/src/lib/config"
 	"io"
 	"io/ioutil"
 	"mime/multipart"
@@ -15,17 +16,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/goharbor/harbor/src/controller/event/metadata"
-
 	"github.com/goharbor/harbor/src/chartserver"
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/rbac"
-	"github.com/goharbor/harbor/src/core/config"
+	rep_event "github.com/goharbor/harbor/src/controller/event/handler/replication/event"
+	"github.com/goharbor/harbor/src/controller/event/metadata"
+	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/core/label"
 	hlog "github.com/goharbor/harbor/src/lib/log"
+	pkg_label "github.com/goharbor/harbor/src/pkg/label"
 	n_event "github.com/goharbor/harbor/src/pkg/notifier/event"
-	rep_event "github.com/goharbor/harbor/src/replication/event"
-	"github.com/goharbor/harbor/src/replication/model"
+	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/server/middleware/orm"
 )
 
@@ -99,7 +100,9 @@ func (cra *ChartRepositoryAPI) Prepare() {
 	}
 
 	// Init label manager
-	cra.labelManager = &label.BaseManager{}
+	cra.labelManager = &label.BaseManager{
+		LabelMgr: pkg_label.Mgr,
+	}
 }
 
 func (cra *ChartRepositoryAPI) requireAccess(action rbac.Action, subresource ...rbac.Resource) bool {
@@ -151,14 +154,14 @@ func (cra *ChartRepositoryAPI) GetIndex() {
 		return
 	}
 
-	results, err := cra.ProjectMgr.List(nil)
+	projects, err := cra.ProjectCtl.List(cra.Context(), nil, project.Metadata(false))
 	if err != nil {
 		cra.SendInternalServerError(err)
 		return
 	}
 
 	namespaces := []string{}
-	for _, r := range results.Projects {
+	for _, r := range projects {
 		namespaces = append(namespaces, r.Name)
 	}
 
@@ -377,8 +380,8 @@ func (cra *ChartRepositoryAPI) DeleteChart() {
 
 	versions := []string{}
 	for _, chartVersion := range chartVersions {
-		versions = append(versions, chartVersion.GetVersion())
-		if err := cra.removeLabelsFromChart(chartName, chartVersion.GetVersion()); err != nil {
+		versions = append(versions, chartVersion.Version)
+		if err := cra.removeLabelsFromChart(chartName, chartVersion.Version); err != nil {
 			cra.SendInternalServerError(err)
 			return
 		}
@@ -433,7 +436,7 @@ func (cra *ChartRepositoryAPI) requireNamespace(namespace string) bool {
 		return false
 	}
 
-	existing, err := cra.ProjectMgr.Exists(namespace)
+	existing, err := cra.ProjectCtl.Exists(cra.Context(), namespace)
 	if err != nil {
 		// Check failed with error
 		cra.SendInternalServerError(fmt.Errorf("failed to check existence of namespace %s with error: %s", namespace, err.Error()))
@@ -442,7 +445,7 @@ func (cra *ChartRepositoryAPI) requireNamespace(namespace string) bool {
 
 	// Not existing
 	if !existing {
-		cra.SendBadRequestError(fmt.Errorf("namespace %s is not existing", namespace))
+		cra.handleProjectNotFound(namespace)
 		return false
 	}
 
@@ -491,11 +494,16 @@ func (cra *ChartRepositoryAPI) addEventContext(files []formFile, request *http.R
 			extInfo["projectName"] = cra.namespace
 			extInfo["chartName"] = chartDetails.Metadata.Name
 
-			public, err := cra.ProjectMgr.IsPublic(cra.namespace)
+			var public bool
+
+			project, err := cra.ProjectCtl.Get(cra.Context(), cra.namespace)
 			if err != nil {
 				hlog.Errorf("failed to check the public of project %s: %v", cra.namespace, err)
 				public = false
+			} else {
+				public = project.IsPublic()
 			}
+
 			e := &rep_event.Event{
 				Type: rep_event.EventTypeChartUpload,
 				Resource: &model.Resource{

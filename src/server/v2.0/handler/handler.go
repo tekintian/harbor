@@ -15,12 +15,15 @@
 package handler
 
 import (
+	"context"
 	"log"
 	"net/http"
 
-	serror "github.com/goharbor/harbor/src/server/error"
+	rmiddleware "github.com/go-openapi/runtime/middleware"
+	lib_http "github.com/goharbor/harbor/src/lib/http"
 	"github.com/goharbor/harbor/src/server/middleware"
 	"github.com/goharbor/harbor/src/server/middleware/blob"
+	"github.com/goharbor/harbor/src/server/middleware/metric"
 	"github.com/goharbor/harbor/src/server/middleware/quota"
 	"github.com/goharbor/harbor/src/server/v2.0/restapi"
 )
@@ -28,11 +31,39 @@ import (
 // New returns http handler for API V2.0
 func New() http.Handler {
 	h, api, err := restapi.HandlerAPI(restapi.Config{
-		ArtifactAPI:   newArtifactAPI(),
-		RepositoryAPI: newRepositoryAPI(),
-		AuditlogAPI:   newAuditLogAPI(),
-		ScanAPI:       newScanAPI(),
-		ProjectAPI:    newProjectAPI(),
+		ArtifactAPI:           newArtifactAPI(),
+		RepositoryAPI:         newRepositoryAPI(),
+		AuditlogAPI:           newAuditLogAPI(),
+		ScannerAPI:            newScannerAPI(),
+		ScanAPI:               newScanAPI(),
+		ScanAllAPI:            newScanAllAPI(),
+		SearchAPI:             newSearchAPI(),
+		ProjectAPI:            newProjectAPI(),
+		MemberAPI:             newMemberAPI(),
+		PreheatAPI:            newPreheatAPI(),
+		IconAPI:               newIconAPI(),
+		RobotAPI:              newRobotAPI(),
+		Robotv1API:            newRobotV1API(),
+		ReplicationAPI:        newReplicationAPI(),
+		RegistryAPI:           newRegistryAPI(),
+		SysteminfoAPI:         newSystemInfoAPI(),
+		PingAPI:               newPingAPI(),
+		LdapAPI:               newLdapAPI(),
+		LabelAPI:              newLabelAPI(),
+		GCAPI:                 newGCAPI(),
+		QuotaAPI:              newQuotaAPI(),
+		RetentionAPI:          newRetentionAPI(),
+		WebhookAPI:            newNotificationPolicyAPI(),
+		WebhookjobAPI:         newNotificationJobAPI(),
+		ImmutableAPI:          newImmutableAPI(),
+		OIDCAPI:               newOIDCAPI(),
+		SystemCVEAllowlistAPI: newSystemCVEAllowListAPI(),
+		ConfigureAPI:          newConfigAPI(),
+		UsergroupAPI:          newUserGroupAPI(),
+		UserAPI:               newUsersAPI(),
+		HealthAPI:             newHealthAPI(),
+		StatisticAPI:          newStatisticAPI(),
+		ProjectMetadataAPI:    newProjectMetadaAPI(),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -42,9 +73,16 @@ func New() http.Handler {
 	api.RegisterMiddleware("DeleteArtifact", quota.RefreshForProjectMiddleware())
 	api.RegisterMiddleware("DeleteRepository", quota.RefreshForProjectMiddleware())
 
+	api.BeforePrepare = beforePrepare
 	api.ServeError = serveError
 
 	return h
+}
+
+// function is called before the Prepare of the operation
+func beforePrepare(ctx context.Context, operation string, params interface{}) rmiddleware.Responder {
+	metric.SetMetricOpID(ctx, operation)
+	return nil
 }
 
 // Before executing operation handler, go-swagger will bind a parameters object to a request and validate the request,
@@ -52,5 +90,5 @@ func New() http.Handler {
 // The response format of the default ServeError implementation does not match the internal error response format.
 // So we needed to convert the format to the internal error response format.
 func serveError(rw http.ResponseWriter, r *http.Request, err error) {
-	serror.SendError(rw, err)
+	lib_http.SendError(rw, err)
 }

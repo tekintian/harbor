@@ -16,12 +16,11 @@ package artifact
 
 import (
 	"fmt"
-	cmodels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib/encode/repository"
 	"github.com/goharbor/harbor/src/pkg/artifact"
-	"github.com/goharbor/harbor/src/server/v2.0/models"
+	"github.com/goharbor/harbor/src/pkg/label/model"
 )
 
 // Artifact is the overall view of artifact
@@ -29,7 +28,7 @@ type Artifact struct {
 	artifact.Artifact
 	Tags          []*tag.Tag               `json:"tags"`           // the list of tags that attached to the artifact
 	AdditionLinks map[string]*AdditionLink `json:"addition_links"` // the resource link for build history(image), values.yaml(chart), dependency(chart), etc
-	Labels        []*cmodels.Label         `json:"labels"`
+	Labels        []*model.Label           `json:"labels"`
 }
 
 // SetAdditionLink set a addition link
@@ -50,14 +49,6 @@ func (artifact *Artifact) SetAdditionLink(addition, version string) {
 type AdditionLink struct {
 	HREF     string `json:"href"`
 	Absolute bool   `json:"absolute"` // specify the href is an absolute URL or not
-}
-
-// ToSwagger converts the addition link to the swagger model
-func (a *AdditionLink) ToSwagger() models.AdditionLink {
-	return models.AdditionLink{
-		Absolute: a.Absolute,
-		Href:     a.HREF,
-	}
 }
 
 // Option is used to specify the properties returned when listing/getting artifacts

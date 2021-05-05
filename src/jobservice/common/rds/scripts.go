@@ -37,19 +37,17 @@ end
 
 // luaFuncCompareText is common lua script function
 var luaFuncCompareText = `
-local function compare(status, revision, checkInT)
+local function compare(status, revision)
   local sCode = stCode(status)
   local aCode = stCode(ARGV[1])
   local aRev = tonumber(ARGV[2]) or 0
   local aCheckInT = tonumber(ARGV[3]) or 0
-
   if revision < aRev or 
-    ( revision == aRev and sCode < aCode ) or
-    ( revision == aRev and sCode == aCode and (not checkInT or checkInT < aCheckInT))
+    ( revision == aRev and sCode <= aCode ) or
+    ( revision == aRev and aCheckInT ~= 0 )
   then
      return 'ok'
   end
-
   return 'no'
 end
 `
@@ -88,8 +86,14 @@ if res then
       end
 
       if ARGV[1] == 'Success' or ARGV[1] == 'Stopped' then
-        -- expire the job stats with shorter interval
+        -- expire the job stats with shorter interval (1 day)
         redis.call('expire', KEYS[1], 86400)
+      elseif ARGV[1] == 'Error' then
+        -- expire the job stats with normal interval (7 days) incase it may be retried again
+        redis.call('expire', KEYS[1], 604800)
+      else
+        -- remove the expire time if existing
+        redis.call('persist', KEYS[1])
       end
     end
     
@@ -102,53 +106,6 @@ return st
 
 // SetStatusScript is lua script for setting job status atomically
 var SetStatusScript = redis.NewScript(2, setStatusScriptText)
-
-// Used to check if the status info provided is still validate
-//
-// KEY[1]: key of job stats
-// ARGV[1]: job status
-// ARGV[2]: revision of job stats
-// ARGV[3]: check in timestamp
-var isStatusMatchScriptText = fmt.Sprintf(`
-%s
-
-%s
-
-local res, st, rev, checkInAt, ack
-
-res = redis.call('hmget', KEYS[1], 'status', 'revision', 'check_in_at', 'ack')
-if res then
-  st = res[1]
-  rev = tonumber(res[2]) or 0
-  checkInAt = tonumber(res[3]) or 0
-  ack = res[4]
-
-  local reply = compare(st, rev, checkInAt)
-
-  if reply == 'ok' then
-    if not ack then
-      return 'ok'
-    end
-    -- ack exists, compare with ack
-    local a = cjson.decode(ack)
-
-    st = a['status']
-    rev = a['revision']
-    checkInAt = a['check_in_at']
-
-    local reply2 = compare(st, rev, checkInAt)
-    if reply2 == 'ok' then
-      return 'ok'
-    end
-  end
-end
-
-return 'no'
-`, luaFuncStCodeText, luaFuncCompareText)
-
-// CheckStatusMatchScript is lua script for checking if the provided status is still matching
-// the backend status.
-var CheckStatusMatchScript = redis.NewScript(1, isStatusMatchScriptText)
 
 // Used to set the hook ACK
 //
@@ -172,7 +129,7 @@ local function canSetAck(jk, nrev)
     if ackv then
       -- ack existing
       local ack = cjson.decode(ackv)
-      local cmp = compare(ack['status'], ack['revision'], ack['check_in_at'])
+      local cmp = compare(ack['status'], ack['revision'])
       if cmp == 'ok' then
         return 'ok'
       end

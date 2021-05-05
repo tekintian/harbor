@@ -24,7 +24,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/driver"
-	"github.com/goharbor/harbor/src/pkg/types"
+	"github.com/goharbor/harbor/src/pkg/quota/types"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
 	"github.com/goharbor/harbor/src/testing/mock"
 	quotatesting "github.com/goharbor/harbor/src/testing/pkg/quota"
@@ -85,7 +85,7 @@ func (suite *ControllerTestSuite) TestGetReservedResources() {
 		suite.Len(resources, 1)
 	}
 
-	time.Sleep(reservedExpiration)
+	time.Sleep(reservedExpiration * 2)
 
 	{
 		resources, err := ctl.getReservedResources(context.TODO(), reference, referenceID)

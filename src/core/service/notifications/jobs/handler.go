@@ -16,24 +16,16 @@ package jobs
 
 import (
 	"encoding/json"
+	"github.com/goharbor/harbor/src/lib/orm"
 	"time"
-
-	"github.com/goharbor/harbor/src/core/service/notifications"
 
 	"github.com/goharbor/harbor/src/common/job"
 	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/controller/event/metadata"
-	"github.com/goharbor/harbor/src/controller/scan"
+	"github.com/goharbor/harbor/src/core/service/notifications"
 	jjob "github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/notification"
-	"github.com/goharbor/harbor/src/pkg/notifier/event"
-	"github.com/goharbor/harbor/src/pkg/retention"
-	sc "github.com/goharbor/harbor/src/pkg/scan"
-	"github.com/goharbor/harbor/src/replication"
-	"github.com/goharbor/harbor/src/replication/operation/hook"
-	"github.com/goharbor/harbor/src/replication/policy/scheduler"
+	"github.com/goharbor/harbor/src/pkg/notification/job/model"
 )
 
 var statusMap = map[string]string{
@@ -94,132 +86,10 @@ func (h *Handler) Prepare() {
 	}
 }
 
-// HandleScan handles the webhook of scan job
-func (h *Handler) HandleScan() {
-	log.Debugf(
-		"Received scan job status update event: job UUID: %s, status: %s, track_id: %s, revision: %d, is checkin: %v",
-		h.change.JobID,
-		h.status,
-		h.trackID,
-		h.revision,
-		len(h.checkIn) > 0,
-	)
-
-	// Trigger image scan webhook event only for JobFinished and JobError status
-	if h.status == models.JobFinished ||
-		h.status == models.JobError ||
-		h.status == models.JobStopped {
-		// Get the required info from the job parameters
-		req, err := sc.ExtractScanReq(h.change.Metadata.Parameters)
-		if err != nil {
-			log.Error(errors.Wrap(err, "scan job hook handler: event publish"))
-		} else {
-			log.Debugf("Scan %s for artifact: %#v", h.status, req.Artifact)
-
-			e := &event.Event{}
-			metaData := &metadata.ScanImageMetaData{
-				Artifact: req.Artifact,
-				Status:   h.status,
-			}
-
-			if err := e.Build(metaData); err == nil {
-				if err := e.Publish(); err != nil {
-					log.Error(errors.Wrap(err, "scan job hook handler: event publish"))
-				}
-			} else {
-				log.Error(errors.Wrap(err, "scan job hook handler: event publish"))
-			}
-		}
-	}
-
-	if err := scan.DefaultController.HandleJobHooks(h.trackID, h.change); err != nil {
-		err = errors.Wrap(err, "scan job hook handler")
-		log.Error(err)
-		h.SendInternalServerError(err)
-
-		return
-	}
-}
-
-// HandleReplicationScheduleJob handles the webhook of replication schedule job
-func (h *Handler) HandleReplicationScheduleJob() {
-	log.Debugf("received replication schedule job status update event: schedule-job-%d, status-%s", h.id, h.status)
-	if err := scheduler.UpdateStatus(h.id, h.status); err != nil {
-		log.Errorf("Failed to update job status, id: %d, status: %s", h.id, h.status)
-		h.SendInternalServerError(err)
-		return
-	}
-}
-
-// HandleReplicationTask handles the webhook of replication task
-func (h *Handler) HandleReplicationTask() {
-	log.Debugf("received replication task status update event: task-%d, status-%s", h.id, h.status)
-
-	if err := hook.UpdateTask(replication.OperationCtl, h.id, h.rawStatus, h.revision); err != nil {
-		log.Errorf("failed to update the status of the replication task %d: %v", h.id, err)
-		h.SendInternalServerError(err)
-		return
-	}
-
-	// Trigger artifict webhook event only for JobFinished and JobError status
-	if h.status == models.JobFinished || h.status == models.JobError || h.status == models.JobStopped {
-		e := &event.Event{}
-		metaData := &metadata.ReplicationMetaData{
-			ReplicationTaskID: h.id,
-			Status:            h.rawStatus,
-		}
-
-		if err := e.Build(metaData); err == nil {
-			if err := e.Publish(); err != nil {
-				log.Error(errors.Wrap(err, "replication job hook handler: event publish"))
-			}
-		} else {
-			log.Error(errors.Wrap(err, "replication job hook handler: event publish"))
-		}
-	}
-}
-
-// HandleRetentionTask handles the webhook of retention task
-func (h *Handler) HandleRetentionTask() {
-	taskID := h.id
-	status := h.rawStatus
-	log.Debugf("received retention task status update event: task-%d, status-%s", taskID, status)
-	mgr := &retention.DefaultManager{}
-	// handle checkin
-	if h.checkIn != "" {
-		var retainObj struct {
-			Total    int `json:"total"`
-			Retained int `json:"retained"`
-		}
-		if err := json.Unmarshal([]byte(h.checkIn), &retainObj); err != nil {
-			log.Errorf("failed to resolve checkin of retention task %d: %v", taskID, err)
-			return
-		}
-		task := &retention.Task{
-			ID:       taskID,
-			Total:    retainObj.Total,
-			Retained: retainObj.Retained,
-		}
-		if err := mgr.UpdateTask(task, "Total", "Retained"); err != nil {
-			log.Errorf("failed to update of retention task %d: %v", taskID, err)
-			h.SendInternalServerError(err)
-			return
-		}
-		return
-	}
-
-	// handle status updating
-	if err := mgr.UpdateTaskStatus(taskID, status, h.revision); err != nil {
-		log.Errorf("failed to update the status of retention task %d: %v", taskID, err)
-		h.SendInternalServerError(err)
-		return
-	}
-}
-
 // HandleNotificationJob handles the hook of notification job
 func (h *Handler) HandleNotificationJob() {
 	log.Debugf("received notification job status update event: job-%d, status-%s", h.id, h.status)
-	if err := notification.JobMgr.Update(&models.NotificationJob{
+	if err := notification.JobMgr.Update(orm.Context(), &model.Job{
 		ID:         h.id,
 		Status:     h.status,
 		UpdateTime: time.Now(),

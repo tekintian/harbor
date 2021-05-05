@@ -16,17 +16,33 @@ package orm
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 
 	"github.com/astaxie/beego/orm"
-	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/lib/q"
 )
 
-// QuerySetter generates the query setter according to the query. "ignoredCols" is used to set the
-// columns that will not be queried
-func QuerySetter(ctx context.Context, model interface{}, query *q.Query, ignoredCols ...string) (orm.QuerySeter, error) {
+// QuerySetter generates the query setter according to the provided model and query.
+// e.g.
+// type Foo struct{
+//   Field1 string `orm:"-"`                         // can not filter/sort
+//   Field2 string `orm:"column(customized_field2)"` // support filter by "Field2", "customized_field2"
+//   Field3 string `sort:"false"`                    // cannot be sorted
+//   Field4 string `sort:"default:desc"`             // the default field/order(asc/desc) to sort if no sorting specified in query.
+//   Field5 string `filter:"false"`                  // cannot be filtered
+// }
+// // support filter by "Field6", "field6"
+// func (f *Foo) FilterByField6(ctx context.Context, qs orm.QuerySetter, key string, value interface{}) orm.QuerySetter {
+//   ...
+//	 return qs
+// }
+func QuerySetter(ctx context.Context, model interface{}, query *q.Query) (orm.QuerySeter, error) {
+	t := reflect.TypeOf(model)
+	if t.Kind() != reflect.Ptr {
+		return nil, fmt.Errorf("<orm.QuerySetter> cannot use non-ptr model struct `%s`", getFullName(t.Elem()))
+	}
 	ormer, err := FromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -36,127 +52,135 @@ func QuerySetter(ctx context.Context, model interface{}, query *q.Query, ignored
 		return qs, nil
 	}
 
-	// the program will panic when querying the columns that doesn't exist
-	// list the supported columns first to avoid the panic
-	cols := listQueriableCols(model, ignoredCols...)
-	for k, v := range query.Keywords {
-		col := strings.SplitN(k, orm.ExprSep, 2)[0]
-		if _, exist := cols[col]; !exist {
-			continue
-		}
+	metadata := parseModel(model)
+	// set filters
+	qs = setFilters(ctx, qs, query, metadata)
 
-		// fuzzy match
-		f, ok := v.(*q.FuzzyMatchValue)
-		if ok {
-			qs = qs.Filter(k+"__icontains", f.Value)
-			continue
-		}
+	// sorting
+	qs = setSorts(qs, query, metadata)
 
-		// range
-		r, ok := v.(*q.Range)
-		if ok {
-			if r.Min != nil {
-				qs = qs.Filter(k+"__gte", r.Min)
-			}
-			if r.Max != nil {
-				qs = qs.Filter(k+"__lte", r.Max)
-			}
-			continue
-		}
-
-		// or list
-		ol, ok := v.(*q.OrList)
-		if ok {
-			if len(ol.Values) > 0 {
-				qs = qs.Filter(k+"__in", ol.Values...)
-			}
-			continue
-		}
-
-		// and list
-		_, ok = v.(*q.AndList)
-		if ok {
-			// do nothing as and list needs to be handled by the logic of DAO
-			continue
-		}
-
-		// exact match
-		qs = qs.Filter(k, v)
-	}
+	// pagination
 	if query.PageSize > 0 {
 		qs = qs.Limit(query.PageSize)
 		if query.PageNumber > 0 {
 			qs = qs.Offset(query.PageSize * (query.PageNumber - 1))
 		}
 	}
+
 	return qs, nil
 }
 
-// list the columns that can be queried
-// e.g. for the following model the columns that can be queried are:
-// "Field2", "customized_field2", "Field3" and "field3"
-// type model struct{
-//   Field1 string `orm:"-"`
-//   Field2 string `orm:"column(customized_field2)"`
-//   Field3 string
-// }
-//
-// set "ignoredCols" to ignore the specified columns
-func listQueriableCols(model interface{}, ignoredCols ...string) map[string]struct{} {
-	if model == nil {
-		return nil
-	}
-	ignored := map[string]struct{}{}
-	for _, ig := range ignoredCols {
-		ignored[ig] = struct{}{}
-	}
-	cols := map[string]struct{}{}
-	t := reflect.Indirect(reflect.ValueOf(model)).Type()
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		orm := field.Tag.Get("orm")
-		if orm == "-" {
-			continue
+// PaginationOnRawSQL append page information to the raw sql
+// It should be called after the order by
+// e.g.
+// select a, b, c from mytable order by a limit ? offset ?
+// it appends the " limit ? offset ? " to sql,
+// and appends the limit value and offset value to the params of this query
+func PaginationOnRawSQL(query *q.Query, sql string, params []interface{}) (string, []interface{}) {
+	if query != nil && query.PageSize > 0 {
+		sql += ` limit ?`
+		params = append(params, query.PageSize)
+
+		if query.PageNumber > 0 {
+			sql += ` offset ?`
+			params = append(params, (query.PageNumber-1)*query.PageSize)
 		}
-		colName := ""
-		for _, str := range strings.Split(orm, ";") {
-			if strings.HasPrefix(str, "column") {
-				str = strings.TrimPrefix(str, "column(")
-				str = strings.TrimSuffix(str, ")")
-				if len(str) > 0 {
-					colName = str
-					break
-				}
+	}
+	return sql, params
+}
+
+// QuerySetterForCount creates the query setter used for count with the sort and pagination information ignored
+func QuerySetterForCount(ctx context.Context, model interface{}, query *q.Query, ignoredCols ...string) (orm.QuerySeter, error) {
+	query = q.MustClone(query)
+	query.Sorts = nil
+	query.PageSize = 0
+	query.PageNumber = 0
+	return QuerySetter(ctx, model, query)
+}
+
+// set filters according to the query
+func setFilters(ctx context.Context, qs orm.QuerySeter, query *q.Query, meta *metadata) orm.QuerySeter {
+	for key, value := range query.Keywords {
+		// The "strings.SplitN()" here is a workaround for the incorrect usage of query which should be avoided
+		// e.g. use the query with the knowledge of underlying ORM implementation, the "OrList" should be used instead:
+		// https://github.com/goharbor/harbor/blob/v2.2.0/src/controller/project/controller.go#L348
+		k := strings.SplitN(key, orm.ExprSep, 2)[0]
+		mk, filterable := meta.Filterable(k)
+		if !filterable {
+			// This is a workaround for the unsuitable usage of query, the keyword format for field and method should be consistent
+			// e.g. "ArtifactDigest" or the snake case format "artifact_digest" should be used instead:
+			// https://github.com/goharbor/harbor/blob/v2.2.0/src/controller/blob/controller.go#L233
+			mk, filterable = meta.Filterable(snakeCase(k))
+			if !filterable {
+				continue
 			}
 		}
-		if len(colName) == 0 {
-			// TODO convert the field.Name to snake_case
-		}
-		if _, exist := ignored[colName]; exist {
+		// filter function defined, use it directly
+		if mk.FilterFunc != nil {
+			qs = mk.FilterFunc(ctx, qs, key, value)
 			continue
 		}
-		if _, exist := ignored[field.Name]; exist {
+		// fuzzy match
+		if f, ok := value.(*q.FuzzyMatchValue); ok {
+			qs = qs.Filter(key+"__icontains", Escape(f.Value))
 			continue
 		}
-		if len(colName) != 0 {
-			cols[colName] = struct{}{}
+		// range
+		if r, ok := value.(*q.Range); ok {
+			if r.Min != nil {
+				qs = qs.Filter(key+"__gte", r.Min)
+			}
+			if r.Max != nil {
+				qs = qs.Filter(key+"__lte", r.Max)
+			}
+			continue
 		}
-		cols[field.Name] = struct{}{}
+		// or list
+		if ol, ok := value.(*q.OrList); ok {
+			if len(ol.Values) > 0 {
+				qs = qs.Filter(key+"__in", ol.Values...)
+			}
+			continue
+		}
+		// and list
+		if _, ok := value.(*q.AndList); ok {
+			// do nothing as and list needs to be handled by the logic of DAO
+			continue
+		}
+		// exact match
+		qs = qs.Filter(key, value)
 	}
-	return cols
+	return qs
 }
 
-// ParamPlaceholderForIn returns a string that contains placeholders for sql keyword "in"
-// e.g. n=3, returns "?,?,?"
-func ParamPlaceholderForIn(n int) string {
-	placeholders := []string{}
-	for i := 0; i < n; i++ {
-		placeholders = append(placeholders, "?")
+// set sorts according to the query
+func setSorts(qs orm.QuerySeter, query *q.Query, meta *metadata) orm.QuerySeter {
+	var sortings []string
+	for _, sort := range query.Sorts {
+		if !meta.Sortable(sort.Key) {
+			continue
+		}
+		sorting := sort.Key
+		if sort.DESC {
+			sorting = fmt.Sprintf("-%s", sorting)
+		}
+		sortings = append(sortings, sorting)
 	}
-	return strings.Join(placeholders, ",")
+	// if no sorts are specified, apply the default sort setting if exists
+	if len(sortings) == 0 && meta.DefaultSort != nil {
+		sorting := meta.DefaultSort.Key
+		if meta.DefaultSort.DESC {
+			sorting = fmt.Sprintf("-%s", sorting)
+		}
+		sortings = append(sortings, sorting)
+	}
+	if len(sortings) > 0 {
+		qs = qs.OrderBy(sortings...)
+	}
+	return qs
 }
 
-// Escape special characters
-func Escape(str string) string {
-	return dao.Escape(str)
+// get reflect.Type name with package path.
+func getFullName(typ reflect.Type) string {
+	return typ.PkgPath() + "." + typ.Name()
 }

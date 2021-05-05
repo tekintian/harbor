@@ -20,15 +20,14 @@ Resource  ../../resources/Util.robot
 View Repo Scan Details
     [Arguments]  @{vulnerabilities_level}
     Retry Element Click  xpath=${first_repo_xpath}
-    Capture Page Screenshot
-    :FOR  ${item}  IN  @{vulnerabilities_level}
-    \    Retry Wait Until Page Contains Element  //hbr-artifact-vulnerabilities//clr-dg-row[contains(.,'${item}')]
+    FOR  ${item}  IN  @{vulnerabilities_level}
+        Retry Wait Until Page Contains Element  //hbr-artifact-vulnerabilities//clr-dg-row[contains(.,'${item}')]
+    END
     Retry Element Click  xpath=${build_history_btn}
     Retry Wait Until Page Contains Element  xpath=${build_history_data}
 
 View Scan Error Log
     Retry Wait Until Page Contains  View Log
     Retry Element Click  xpath=${view_log_xpath}
-    Capture Page Screenshot  viewlog.png
 
 

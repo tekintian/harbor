@@ -16,13 +16,12 @@ package scan
 
 import (
 	"context"
-	bo "github.com/astaxie/beego/orm"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 )
 
@@ -30,8 +29,13 @@ import (
 type DelArtHandler struct {
 }
 
+// Name ...
+func (o *DelArtHandler) Name() string {
+	return "DeleteArtifactWebhook"
+}
+
 // Handle ...
-func (o *DelArtHandler) Handle(value interface{}) error {
+func (o *DelArtHandler) Handle(ctx context.Context, value interface{}) error {
 	if value == nil {
 		return errors.New("delete image event handler: nil value ")
 	}
@@ -43,30 +47,17 @@ func (o *DelArtHandler) Handle(value interface{}) error {
 
 	log.Debugf("clear the scan reports as receiving event %s", evt.EventType)
 
-	digests := make([]string, 0)
-	query := &q.Query{
-		Keywords: make(map[string]interface{}),
-	}
-
-	ctx := orm.NewContext(context.TODO(), bo.NewOrm())
 	// Check if it is safe to delete the reports.
-	query.Keywords["digest"] = evt.Artifact.Digest
-	l, err := artifact.Ctl.List(ctx, query, nil)
-
-	if err != nil && len(l) != 0 {
+	count, err := artifact.Ctl.Count(ctx, q.New(q.KeyWords{"digest": evt.Artifact.Digest}))
+	if err != nil {
 		// Just logged
 		log.Error(errors.Wrap(err, "delete image event handler"))
-		// Passed for safe consideration
-	} else {
-		if len(l) == 0 {
-			digests = append(digests, evt.Artifact.Digest)
-			log.Debugf("prepare to remove the scan report linked with artifact: %s", evt.Artifact.Digest)
+	} else if count == 0 {
+		log.Debugf("prepare to remove the scan report linked with artifact: %s", evt.Artifact.Digest)
 
+		if err := scan.DefaultController.DeleteReports(ctx, evt.Artifact.Digest); err != nil {
+			return errors.Wrap(err, "delete image event handler")
 		}
-	}
-
-	if err := scan.DefaultController.DeleteReports(digests...); err != nil {
-		return errors.Wrap(err, "delete image event handler")
 	}
 
 	return nil

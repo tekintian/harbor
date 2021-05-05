@@ -65,28 +65,28 @@ Test Case - Scan Image With Empty Vul
     Body Of Scan Image With Empty Vul  photon  2.0_scan
 
 Test Case - Manual Scan All
-    Body Of Manual Scan All  Critical  High  Medium
+    Body Of Manual Scan All  High  Medium
 
-Test Case - View Scan Error
-    Init Chrome Driver
-    ${d}=  get current date  result_format=%m%s
+#Test Case - View Scan Error
+#    Init Chrome Driver
+#    ${d}=  get current date  result_format=%m%s
 
-    Sign In Harbor  ${HARBOR_URL}  user026  Test1@34
-    Create An New Project  project${d}
-    Push Image  ${ip}  user026  Test1@34  project${d}  busybox:latest
-    Go Into Project  project${d}
-    Go Into Repo  project${d}/busybox
-    Scan Repo  latest  Fail
-    View Scan Error Log
-    Close Browser
+#    Sign In Harbor  ${HARBOR_URL}  user026  Test1@34
+#    Create An New Project And Go Into Project  project${d}
+#    Push Image  ${ip}  user026  Test1@34  project${d}  busybox:latest
+#    Go Into Project  project${d}
+#    Go Into Repo  project${d}/busybox
+#    Scan Repo  latest  Fail
+#    View Scan Error Log
+#    Close Browser
 
 Test Case - Scan Image On Push
     [Tags]  run-once
-    Body Of Scan Image On Push  Critical  High  Medium
+    Body Of Scan Image On Push  High  Medium
 
 Test Case - View Scan Results
     [Tags]  run-once
-    Body Of View Scan Results  Critical  High
+    Body Of View Scan Results  High
 
 Test Case - Project Level Image Serverity Policy
     [Tags]  run-once
@@ -98,7 +98,7 @@ Test Case - Project Level Image Serverity Policy
     #For internal CPE harbor registry
     ${sha256}=  Set Variable  0e67625224c1da47cb3270e7a861a83e332f708d3d89dde0cbed432c94824d9a
     ${image}=  Set Variable  redis
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image}  sha256=${sha256}
     Go Into Project  project${d}
     Go Into Repo  ${image}
@@ -106,15 +106,16 @@ Test Case - Project Level Image Serverity Policy
     Navigate To Projects
     Go Into Project  project${d}
     Set Vulnerabilty Serverity  3
-    Cannot pull image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image}  tag=${sha256}
+    Cannot Pull Image  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  ${image}  tag=${sha256}  err_msg=To continue with pull, please contact your project administrator to exempt matched vulnerabilities through configuring the CVE allowlist
     Close Browser
 
-#Important Note: All CVE IDs in CVE Whitelist cases must unique!
-Test Case - Verfiy System Level CVE Whitelist
-    Body Of Verfiy System Level CVE Whitelist  goharbor/harbor-portal  2cb6a1c24dd6b88f11fd44ccc6560cb7be969f8ac5f752802c99cae6bcd592bb  CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645  CVE-2019-18276
+#Important Note: All CVE IDs in CVE Allowlist cases must unique!
+Test Case - Verfiy System Level CVE Allowlist
+    [Tags]  sys_cve
+    Body Of Verfiy System Level CVE Allowlist  goharbor/harbor-portal  2cb6a1c24dd6b88f11fd44ccc6560cb7be969f8ac5f752802c99cae6bcd592bb  CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645  CVE-2019-18276
 
-Test Case - Verfiy Project Level CVE Whitelist
-    Body Of Verfiy Project Level CVE Whitelist  goharbor/harbor-portal  2cb6a1c24dd6b88f11fd44ccc6560cb7be969f8ac5f752802c99cae6bcd592bb  CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645  CVE-2019-18276
+Test Case - Verfiy Project Level CVE Allowlist
+    Body Of Verfiy Project Level CVE Allowlist  goharbor/harbor-portal  2cb6a1c24dd6b88f11fd44ccc6560cb7be969f8ac5f752802c99cae6bcd592bb  CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645  CVE-2019-18276
 
-Test Case - Verfiy Project Level CVE Whitelist By Quick Way of Add System
-    Body Of Verfiy Project Level CVE Whitelist By Quick Way of Add System  goharbor/harbor-portal  2cb6a1c24dd6b88f11fd44ccc6560cb7be969f8ac5f752802c99cae6bcd592bb  CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645 \nCVE-2019-18276
+Test Case - Verfiy Project Level CVE Allowlist By Quick Way of Add System
+    Body Of Verfiy Project Level CVE Allowlist By Quick Way of Add System  goharbor/harbor-portal  2cb6a1c24dd6b88f11fd44ccc6560cb7be969f8ac5f752802c99cae6bcd592bb  CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645 \nCVE-2019-18276

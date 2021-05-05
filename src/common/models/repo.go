@@ -15,11 +15,12 @@
 package models
 
 import (
-	"github.com/go-openapi/strfmt"
-	"github.com/goharbor/harbor/src/server/v2.0/models"
+	"context"
+	"fmt"
 	"time"
 
-	"github.com/goharbor/harbor/src/pkg/signature/notary/model"
+	"github.com/astaxie/beego/orm"
+	"github.com/lib/pq"
 	"github.com/theupdateframework/notary/tuf/data"
 )
 
@@ -36,21 +37,23 @@ type RepoRecord struct {
 	Description  string    `orm:"column(description)" json:"description"`
 	PullCount    int64     `orm:"column(pull_count)" json:"pull_count"`
 	StarCount    int64     `orm:"column(star_count)" json:"star_count"`
-	CreationTime time.Time `orm:"column(creation_time);auto_now_add" json:"creation_time"`
+	CreationTime time.Time `orm:"column(creation_time);auto_now_add" json:"creation_time" sort:"default:desc"`
 	UpdateTime   time.Time `orm:"column(update_time);auto_now" json:"update_time"`
 }
 
-// ToSwagger converts the repository into the swagger model
-func (r *RepoRecord) ToSwagger() *models.Repository {
-	return &models.Repository{
-		CreationTime: strfmt.DateTime(r.CreationTime),
-		Description:  r.Description,
-		ID:           r.RepositoryID,
-		Name:         r.Name,
-		ProjectID:    r.ProjectID,
-		PullCount:    r.PullCount,
-		UpdateTime:   strfmt.DateTime(r.UpdateTime),
+// FilterByBlobDigest filters the repositories by the blob digest
+func (r *RepoRecord) FilterByBlobDigest(ctx context.Context, qs orm.QuerySeter, key string, value interface{}) orm.QuerySeter {
+	digest, ok := value.(string)
+	if !ok || len(digest) == 0 {
+		return qs
 	}
+
+	sql := fmt.Sprintf(`select distinct(a.repository_id)
+				from artifact as a
+				join artifact_blob as ab
+				on a.digest = ab.digest_af
+				where ab.digest_blob = %s`, pq.QuoteLiteral(digest))
+	return qs.FilterRaw("repository_id", fmt.Sprintf("in (%s)", sql))
 }
 
 // TableName is required by by beego orm to map RepoRecord to table repository
@@ -66,16 +69,6 @@ type RepositoryQuery struct {
 	LabelID     int64
 	Pagination
 	Sorting
-}
-
-// TagResp holds the information of one image tag
-type TagResp struct {
-	TagDetail
-	Signature    *model.Target          `json:"signature"`
-	ScanOverview map[string]interface{} `json:"scan_overview,omitempty"`
-	Labels       []*Label               `json:"labels"`
-	PushTime     time.Time              `json:"push_time"`
-	PullTime     time.Time              `json:"pull_time"`
 }
 
 // TagDetail ...

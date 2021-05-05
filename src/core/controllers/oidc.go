@@ -17,7 +17,8 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/common/dao/group"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/orm"
 	"net/http"
 	"strings"
 
@@ -25,11 +26,10 @@ import (
 	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
-	"github.com/goharbor/harbor/src/common/utils/oidc"
 	"github.com/goharbor/harbor/src/core/api"
-	"github.com/goharbor/harbor/src/core/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/oidc"
 )
 
 const tokenKey = "oidc_token"
@@ -48,7 +48,7 @@ type onboardReq struct {
 
 // Prepare include public code path for call request handler of OIDCController
 func (oc *OIDCController) Prepare() {
-	if mode, _ := config.AuthMode(); mode != common.OIDCAuth {
+	if mode, _ := config.AuthMode(orm.Context()); mode != common.OIDCAuth {
 		oc.SendPreconditionFailedError(fmt.Errorf("auth mode: %s is not OIDC based", mode))
 		return
 	}
@@ -122,30 +122,93 @@ func (oc *OIDCController) Callback() {
 	}
 	oc.SetSession(tokenKey, tokenBytes)
 
-	if u == nil {
-		oc.SetSession(userInfoKey, string(ouDataStr))
-		oc.Controller.Redirect(fmt.Sprintf("/oidc-onboard?username=%s", strings.Replace(info.Username, " ", "_", -1)),
-			http.StatusFound)
-	} else {
-		gids, err := group.PopulateGroup(models.UserGroupsFromName(info.Groups, common.OIDCGroupType))
-		if err != nil {
-			log.Warningf("Failed to populate groups, error: %v, user will have empty group list, username: %s", err, info.Username)
-		}
-		u.GroupIDs = gids
-		oidcUser, err := dao.GetOIDCUserByUserID(u.UserID)
-		if err != nil {
-			oc.SendInternalServerError(err)
-			return
-		}
-		_, t, err := secretAndToken(tokenBytes)
-		oidcUser.Token = t
-		if err := dao.UpdateOIDCUser(oidcUser); err != nil {
-			oc.SendInternalServerError(err)
-			return
-		}
-		oc.PopulateUserSession(*u)
-		oc.Controller.Redirect("/", http.StatusFound)
+	oidcSettings, err := config.OIDCSetting(ctx)
+	if err != nil {
+		oc.SendInternalServerError(err)
+		return
 	}
+
+	if u == nil {
+		// Recover the username from d.Username by default
+		username := info.Username
+
+		// Fix blanks in username
+		username = strings.Replace(username, " ", "_", -1)
+
+		// If automatic onboard is enabled, skip the onboard page
+		if oidcSettings.AutoOnboard {
+			log.Debug("Doing automatic onboarding\n")
+			if username == "" {
+				oc.SendInternalServerError(fmt.Errorf("unable to recover username for auto onboard, username claim: %s",
+					oidcSettings.UserClaim))
+				return
+			}
+			user, onboarded := userOnboard(oc, info, username, tokenBytes)
+			if onboarded == false {
+				log.Error("User not onboarded\n")
+				return
+			}
+			log.Debug("User automatically onboarded\n")
+			u = user
+		} else {
+			oc.SetSession(userInfoKey, string(ouDataStr))
+			oc.Controller.Redirect(fmt.Sprintf("/oidc-onboard?username=%s", username), http.StatusFound)
+			// Once redirected, no further actions are done
+			return
+		}
+	}
+	oidc.InjectGroupsToUser(info, u)
+	oidcUser, err := dao.GetOIDCUserByUserID(u.UserID)
+	if err != nil {
+		oc.SendInternalServerError(err)
+		return
+	}
+	_, t, err := secretAndToken(tokenBytes)
+	oidcUser.Token = t
+	if err := dao.UpdateOIDCUser(oidcUser); err != nil {
+		oc.SendInternalServerError(err)
+		return
+	}
+	oc.PopulateUserSession(*u)
+	oc.Controller.Redirect("/", http.StatusFound)
+
+}
+
+func userOnboard(oc *OIDCController, info *oidc.UserInfo, username string, tokenBytes []byte) (*models.User, bool) {
+	s, t, err := secretAndToken(tokenBytes)
+	if err != nil {
+		oc.SendInternalServerError(err)
+		return nil, false
+	}
+	oidcUser := models.OIDCUser{
+		SubIss: info.Subject + info.Issuer,
+		Secret: s,
+		Token:  t,
+	}
+
+	user := &models.User{
+		Username:     username,
+		Realname:     username,
+		Email:        info.Email,
+		OIDCUserMeta: &oidcUser,
+		Comment:      oidcUserComment,
+	}
+	oidc.InjectGroupsToUser(info, user)
+
+	log.Debugf("User created: %+v\n", *user)
+
+	err = dao.OnBoardOIDCUser(user)
+	if err != nil {
+		if strings.Contains(err.Error(), dao.ErrDupUser.Error()) {
+			oc.RenderError(http.StatusConflict, "Conflict, the user with same username or email has been onboarded.")
+			return nil, false
+		}
+
+		oc.SendInternalServerError(err)
+		return nil, false
+	}
+
+	return user, true
 }
 
 // Onboard handles the request to onboard a user authenticated via OIDC provider
@@ -176,51 +239,20 @@ func (oc *OIDCController) Onboard() {
 		oc.SendBadRequestError(errors.New("Failed to get OIDC token from session"))
 		return
 	}
-	s, t, err := secretAndToken(tb)
-	if err != nil {
-		oc.SendInternalServerError(err)
-		return
-	}
+
 	d := &oidc.UserInfo{}
-	err = json.Unmarshal([]byte(userInfoStr), &d)
+	err := json.Unmarshal([]byte(userInfoStr), &d)
 	if err != nil {
 		oc.SendInternalServerError(err)
 		return
 	}
-	gids, err := group.PopulateGroup(models.UserGroupsFromName(d.Groups, common.OIDCGroupType))
-	if err != nil {
-		log.Warningf("Failed to populate group user will have empty group list. username: %s", username)
-	}
-	oidcUser := models.OIDCUser{
-		SubIss: d.Subject + d.Issuer,
-		Secret: s,
-		Token:  t,
-	}
 
-	email := d.Email
-	user := models.User{
-		Username:     username,
-		Realname:     d.Username,
-		Email:        email,
-		GroupIDs:     gids,
-		OIDCUserMeta: &oidcUser,
-		Comment:      oidcUserComment,
-	}
-
-	err = dao.OnBoardOIDCUser(&user)
-	if err != nil {
-		if strings.Contains(err.Error(), dao.ErrDupUser.Error()) {
-			oc.RenderError(http.StatusConflict, "Conflict, the user with same username or email has been onboarded.")
-			return
-		}
-		oc.SendInternalServerError(err)
+	if user, onboarded := userOnboard(oc, d, username, tb); onboarded {
+		user.OIDCUserMeta = nil
 		oc.DelSession(userInfoKey)
-		return
+		oc.PopulateUserSession(*user)
 	}
 
-	user.OIDCUserMeta = nil
-	oc.DelSession(userInfoKey)
-	oc.PopulateUserSession(user)
 }
 
 func secretAndToken(tokenBytes []byte) (string, string, error) {

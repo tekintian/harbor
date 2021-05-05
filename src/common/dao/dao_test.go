@@ -15,18 +15,21 @@
 package dao
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/astaxie/beego/orm"
-	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib/log"
+	libOrm "github.com/goharbor/harbor/src/lib/orm"
 	"github.com/stretchr/testify/assert"
 )
+
+var testCtx context.Context
 
 func execUpdate(o orm.Ormer, sql string, params ...interface{}) error {
 	p, err := o.Raw(sql).Prepare()
@@ -97,15 +100,6 @@ const username string = "Tester01"
 const password string = "Abc12345"
 const projectName string = "test_project"
 const repositoryName string = "test_repository"
-const repoTag string = "test1.1"
-const repoTag2 string = "test1.2"
-const SysAdmin int = 1
-const projectAdmin int = 2
-const developer int = 3
-const guest int = 4
-
-const publicityOn = 1
-const publicityOff = 0
 
 func TestMain(m *testing.M) {
 	databases := []string{"postgresql"}
@@ -119,6 +113,7 @@ func TestMain(m *testing.M) {
 		default:
 			log.Fatalf("invalid database: %s", database)
 		}
+		testCtx = libOrm.Context()
 		result = testForAll(m)
 
 		if result != 0 {
@@ -276,25 +271,6 @@ func TestGetUser(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-func TestListUsers(t *testing.T) {
-	users, err := ListUsers(nil)
-	if err != nil {
-		t.Errorf("Error occurred in ListUsers: %v", err)
-	}
-	users2, err := ListUsers(&models.UserQuery{Username: username})
-	if len(users2) != 1 {
-		t.Errorf("Expect one user in list, but the acutal length is %d, the list: %+v", len(users), users)
-	}
-	if users2[0].Username != username {
-		t.Errorf("The username in result list does not match, expected: %s, actual: %s", username, users2[0].Username)
-	}
-
-	users3, err := ListUsers(&models.UserQuery{Username: username, Pagination: &models.Pagination{Page: 2, Size: 1}})
-	if len(users3) != 0 {
-		t.Errorf("Expect no user in list, but the acutal length is %d, the list: %+v", len(users3), users3)
-	}
-}
-
 func TestResetUserPassword(t *testing.T) {
 	uuid := utils.GenerateRandomString()
 
@@ -423,60 +399,6 @@ func TestGetProjects(t *testing.T) {
 	}
 }
 
-// isAdminRole returns whether the user is admin.
-func isAdminRole(userIDOrUsername interface{}) (bool, error) {
-	u := models.User{}
-
-	switch v := userIDOrUsername.(type) {
-	case int:
-		u.UserID = v
-	case string:
-		u.Username = v
-	default:
-		return false, fmt.Errorf("invalid parameter, only int and string are supported: %v", userIDOrUsername)
-	}
-
-	if u.UserID == NonExistUserID && len(u.Username) == 0 {
-		return false, nil
-	}
-
-	user, err := GetUser(u)
-	if err != nil {
-		return false, err
-	}
-
-	if user == nil {
-		return false, nil
-	}
-
-	return user.SysAdminFlag, nil
-}
-
-func TestToggleAdminRole(t *testing.T) {
-	err := ToggleUserAdminRole(currentUser.UserID, true)
-	if err != nil {
-		t.Errorf("Error in toggle ToggleUserAdmin role: %v, user: %+v", err, currentUser)
-	}
-	isAdmin, err := isAdminRole(currentUser.UserID)
-	if err != nil {
-		t.Errorf("Error in IsAdminRole: %v, user id: %d", err, currentUser.UserID)
-	}
-	if !isAdmin {
-		t.Errorf("User is not admin after toggled, user id: %d", currentUser.UserID)
-	}
-	err = ToggleUserAdminRole(currentUser.UserID, false)
-	if err != nil {
-		t.Errorf("Error in toggle ToggleUserAdmin role: %v, user: %+v", err, currentUser)
-	}
-	isAdmin, err = isAdminRole(currentUser.UserID)
-	if err != nil {
-		t.Errorf("Error in IsAdminRole: %v, user id: %d", err, currentUser.UserID)
-	}
-	if isAdmin {
-		t.Errorf("User is still admin after toggled, user id: %d", currentUser.UserID)
-	}
-}
-
 func TestChangeUserProfile(t *testing.T) {
 	user := models.User{UserID: currentUser.UserID, Email: username + "@163.com", Realname: "test", Comment: "Unit Test"}
 	err := ChangeUserProfile(user)
@@ -566,104 +488,6 @@ func TestIsSuperUser(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(IsSuperUser("admin"))
 	assert.False(IsSuperUser("none"))
-}
-
-func TestSaveConfigEntries(t *testing.T) {
-	configEntries := []models.ConfigEntry{
-		{
-			Key:   "teststringkey",
-			Value: "192.168.111.211",
-		},
-		{
-			Key:   "testboolkey",
-			Value: "true",
-		},
-		{
-			Key:   "testnumberkey",
-			Value: "5",
-		},
-		{
-			Key:   common.CfgDriverDB,
-			Value: "db",
-		},
-	}
-	err := SaveConfigEntries(configEntries)
-	if err != nil {
-		t.Fatalf("failed to save configuration to database %v", err)
-	}
-	readEntries, err := GetConfigEntries()
-	if err != nil {
-		t.Fatalf("Failed to get configuration from database %v", err)
-	}
-	findItem := 0
-	for _, entry := range readEntries {
-		switch entry.Key {
-		case "teststringkey":
-			if "192.168.111.211" == entry.Value {
-				findItem++
-			}
-		case "testnumberkey":
-			if "5" == entry.Value {
-				findItem++
-			}
-		case "testboolkey":
-			if "true" == entry.Value {
-				findItem++
-			}
-		default:
-		}
-	}
-	if findItem != 3 {
-		t.Fatalf("Should update 3 configuration but only update %d", findItem)
-	}
-
-	configEntries = []models.ConfigEntry{
-		{
-			Key:   "teststringkey",
-			Value: "192.168.111.215",
-		},
-		{
-			Key:   "testboolkey",
-			Value: "false",
-		},
-		{
-			Key:   "testnumberkey",
-			Value: "7",
-		},
-		{
-			Key:   common.CfgDriverDB,
-			Value: "db",
-		},
-	}
-	err = SaveConfigEntries(configEntries)
-	if err != nil {
-		t.Fatalf("failed to save configuration to database %v", err)
-	}
-	readEntries, err = GetConfigEntries()
-	if err != nil {
-		t.Fatalf("Failed to get configuration from database %v", err)
-	}
-	findItem = 0
-	for _, entry := range readEntries {
-		switch entry.Key {
-		case "teststringkey":
-			if "192.168.111.215" == entry.Value {
-				findItem++
-			}
-		case "testnumberkey":
-			if "7" == entry.Value {
-				findItem++
-			}
-		case "testboolkey":
-			if "false" == entry.Value {
-				findItem++
-			}
-		default:
-		}
-	}
-	if findItem != 3 {
-		t.Fatalf("Should update 3 configuration but only update %d", findItem)
-	}
 }
 
 func TestIsDupRecError(t *testing.T) {

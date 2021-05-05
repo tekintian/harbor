@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	standardExpireTime  = 3600 * time.Second
-	redisENVKey         = "_REDIS_URL"
-	cacheDriverENVKey   = "CHART_CACHE_DRIVER" // "memory" or "redis"
-	cacheDriverMem      = "memory"
-	cacheDriverRedis    = "redis"
-	cacheCollectionName = "helm_chart_cache"
-	maxTry              = 10
+	standardExpireTime       = 3600 * time.Second
+	redisENVKey              = "_REDIS_URL_CORE"
+	cacheDriverENVKey        = "CHART_CACHE_DRIVER" // "memory" or "redis"
+	cacheDriverMem           = "memory"
+	cacheDriverRedis         = "redis"
+	cacheDriverRedisSentinel = "redis_sentinel"
+	cacheCollectionName      = "helm_chart_cache"
+	maxTry                   = 10
 )
 
 // ChartCache is designed to cache some processed data for repeated accessing
@@ -58,11 +59,11 @@ func NewChartCache(config *ChartCacheConfig) *ChartCache {
 		return chartCache
 	}
 
-	if config.DriverType != cacheDriverMem && config.DriverType != cacheDriverRedis {
+	if config.DriverType != cacheDriverMem && config.DriverType != cacheDriverRedis && config.DriverType != cacheDriverRedisSentinel {
 		return chartCache
 	}
 
-	if config.DriverType == cacheDriverRedis {
+	if config.DriverType == cacheDriverRedis || config.DriverType == cacheDriverRedisSentinel {
 		if len(config.Config) == 0 {
 			return chartCache
 		}
@@ -106,7 +107,7 @@ func (chc *ChartCache) PutChart(chart *ChartVersionDetails) {
 		case cacheDriverMem:
 			// Directly put object in
 			err = chc.cache.Put(chart.Metadata.Digest, chart, standardExpireTime)
-		case cacheDriverRedis:
+		case cacheDriverRedis, cacheDriverRedisSentinel:
 			// Marshal to json data before saving
 			var jsonData []byte
 			if jsonData, err = json.Marshal(chart); err == nil {
@@ -182,6 +183,27 @@ func initCacheDriver(cacheConfig *ChartCacheConfig) beego_cache.Cache {
 			}
 
 			hlog.Info("Enable redis cache for chart caching")
+			return redisCache
+		}
+	case cacheDriverRedisSentinel:
+		// New with retry
+		count := 0
+		for {
+			count++
+			redisCache, err := beego_cache.NewCache(cacheDriverRedisSentinel, cacheConfig.Config)
+			if err != nil {
+				// Just logged
+				hlog.Errorf("Failed to initialize redis sentinel cache: %s", err)
+
+				if count < maxTry {
+					<-time.After(time.Duration(backoff(count)) * time.Second)
+					continue
+				}
+
+				return nil
+			}
+
+			hlog.Info("Enable redis sentinel cache for chart caching")
 			return redisCache
 		}
 	default:

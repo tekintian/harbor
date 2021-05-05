@@ -2,14 +2,14 @@ package chartserver
 
 import (
 	"fmt"
+	"github.com/goharbor/harbor/src/lib/config"
 	"path"
 	"strings"
 	"sync"
 
 	"github.com/goharbor/harbor/src/lib/errors"
-	"k8s.io/helm/cmd/helm/search"
+	"helm.sh/helm/v3/cmd/helm/search"
 
-	"github.com/goharbor/harbor/src/core/config"
 	hlog "github.com/goharbor/harbor/src/lib/log"
 )
 
@@ -104,7 +104,7 @@ func (c *Controller) DeleteChart(namespace, chartName string) error {
 				waitGroup.Done()
 			}()
 
-			if err := c.DeleteChartVersion(namespace, chartName, deletingVersion.GetVersion()); err != nil {
+			if err := c.DeleteChartVersion(namespace, chartName, deletingVersion.Version); err != nil {
 				errChan <- err
 			}
 		}(deletingVersion)
@@ -175,7 +175,7 @@ func (c *Controller) GetChartVersionDetails(namespace, chartName, version string
 		chartDetails.Security.Signature.Provenance = provFilePath
 	} else {
 		// Just log it
-		hlog.Errorf("Failed to get prov file for chart %s with error: %s, got %d bytes", chartV.Name, err.Error(), len(provBytes))
+		hlog.Debugf("Failed to get prov file for chart %s with error: %s, got %d bytes", chartV.Name, err.Error(), len(provBytes))
 	}
 
 	return chartDetails, nil

@@ -17,7 +17,8 @@ package dao
 import (
 	"context"
 	"fmt"
-	"strings"
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/log"
 	"time"
 
 	"github.com/docker/distribution/manifest/schema2"
@@ -49,14 +50,20 @@ type DAO interface {
 	// UpdateBlob update blob
 	UpdateBlob(ctx context.Context, blob *models.Blob) error
 
+	// UpdateBlob update blob status
+	UpdateBlobStatus(ctx context.Context, blob *models.Blob) (int64, error)
+
 	// ListBlobs list blobs by query
-	ListBlobs(ctx context.Context, params models.ListParams) ([]*models.Blob, error)
+	ListBlobs(ctx context.Context, query *q.Query) ([]*models.Blob, error)
 
 	// FindBlobsShouldUnassociatedWithProject filter the blobs which should not be associated with the project
 	FindBlobsShouldUnassociatedWithProject(ctx context.Context, projectID int64, blobs []*models.Blob) ([]*models.Blob, error)
 
 	// SumBlobsSizeByProject returns sum size of blobs by project, skip foreign blobs when `excludeForeignLayer` is true
 	SumBlobsSizeByProject(ctx context.Context, projectID int64, excludeForeignLayer bool) (int64, error)
+
+	// SumBlobsSize returns sum size of all blobs skip foreign blobs when `excludeForeignLayer` is true
+	SumBlobsSize(ctx context.Context, excludeForeignLayer bool) (int64, error)
 
 	// CreateProjectBlob create ProjectBlob and ignore conflict on project id and blob id
 	CreateProjectBlob(ctx context.Context, projectID, blobID int64) (int64, error)
@@ -66,6 +73,12 @@ type DAO interface {
 
 	// ExistProjectBlob returns true when ProjectBlob exist
 	ExistProjectBlob(ctx context.Context, projectID int64, blobDigest string) (bool, error)
+
+	// DeleteBlob delete blob
+	DeleteBlob(ctx context.Context, id int64) (err error)
+
+	// GetBlobsNotRefedByProjectBlob get the blobs that are not referenced by the table project_blob and also not in the reserve window(in hours)
+	GetBlobsNotRefedByProjectBlob(ctx context.Context, timeWindowHours int64) ([]*models.Blob, error)
 }
 
 // New returns an instance of the default DAO
@@ -144,6 +157,8 @@ func (d *dao) CreateBlob(ctx context.Context, blob *models.Blob) (int64, error) 
 	}
 
 	blob.CreationTime = time.Now()
+	// the default status is none
+	blob.Status = models.StatusNone
 
 	return o.InsertOrUpdate(blob, "digest")
 }
@@ -162,44 +177,54 @@ func (d *dao) GetBlobByDigest(ctx context.Context, digest string) (*models.Blob,
 	return blob, nil
 }
 
+func (d *dao) UpdateBlobStatus(ctx context.Context, blob *models.Blob) (int64, error) {
+	o, err := orm.FromContext(ctx)
+	if err != nil {
+		return -1, err
+	}
+
+	var sql string
+	if blob.Status == models.StatusNone {
+		sql = `UPDATE blob SET version = version + 1, update_time = ?, status = ? where id = ? AND version >= ? AND status IN (%s) RETURNING version as new_version`
+	} else {
+		sql = `UPDATE blob SET version = version + 1, update_time = ?, status = ? where id = ? AND version = ? AND status IN (%s) RETURNING version as new_version`
+	}
+
+	var newVersion int64
+	params := []interface{}{time.Now(), blob.Status, blob.ID, blob.Version}
+	stats := models.StatusMap[blob.Status]
+	for _, stat := range stats {
+		params = append(params, stat)
+	}
+	if err := o.Raw(fmt.Sprintf(sql, orm.ParamPlaceholderForIn(len(models.StatusMap[blob.Status]))), params...).QueryRow(&newVersion); err != nil {
+		if e := orm.AsNotFoundError(err, "no blob is updated"); e != nil {
+			log.Warningf("no blob is updated according to query condition, id: %d, status_in, %v, err: %v", blob.ID, models.StatusMap[blob.Status], e)
+			return 0, nil
+		}
+		return -1, err
+	}
+
+	blob.Version = newVersion
+	return 1, nil
+}
+
+// UpdateBlob cannot handle the status change and version increase, for handling blob status change, please call
+// for the UpdateBlobStatus.
 func (d *dao) UpdateBlob(ctx context.Context, blob *models.Blob) error {
 	o, err := orm.FromContext(ctx)
 	if err != nil {
 		return err
 	}
-
-	_, err = o.Update(blob)
+	blob.UpdateTime = time.Now()
+	_, err = o.Update(blob, "size", "content_type", "update_time")
 	return err
 }
 
-func (d *dao) ListBlobs(ctx context.Context, params models.ListParams) ([]*models.Blob, error) {
-	qs, err := orm.QuerySetter(ctx, &models.Blob{}, nil)
+func (d *dao) ListBlobs(ctx context.Context, query *q.Query) ([]*models.Blob, error) {
+	qs, err := orm.QuerySetter(ctx, &models.Blob{}, query)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(params.BlobDigests) > 0 {
-		qs = qs.Filter("digest__in", params.BlobDigests)
-	}
-
-	if params.ArtifactDigest != "" {
-		params.ArtifactDigests = append(params.ArtifactDigests, params.ArtifactDigest)
-	}
-
-	if len(params.ArtifactDigests) > 0 {
-		var p []string
-		for _, digest := range params.ArtifactDigests {
-			p = append(p, `'`+orm.Escape(digest)+`'`)
-		}
-		sql := fmt.Sprintf("IN (SELECT digest_blob FROM artifact_blob WHERE digest_af IN (%s))", strings.Join(p, ","))
-		qs = qs.FilterRaw("digest", sql)
-	}
-
-	if params.ProjectID != 0 {
-		sql := fmt.Sprintf("IN (SELECT blob_id FROM project_blob WHERE project_id = %d)", params.ProjectID)
-		qs = qs.FilterRaw("id", sql)
-	}
-
 	blobs := []*models.Blob{}
 	if _, err = qs.All(&blobs); err != nil {
 		return nil, err
@@ -269,6 +294,31 @@ func (d *dao) SumBlobsSizeByProject(ctx context.Context, projectID int64, exclud
 	return totalSize, nil
 }
 
+// SumBlobsSize returns sum size of all blobs skip foreign blobs when `excludeForeignLayer` is true
+func (d *dao) SumBlobsSize(ctx context.Context, excludeForeignLayer bool) (int64, error) {
+	o, err := orm.FromContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	params := []interface{}{}
+	sql := `SELECT SUM(size) FROM blob`
+	if excludeForeignLayer {
+		foreignLayerTypes := []interface{}{
+			schema2.MediaTypeForeignLayer,
+		}
+		sql = fmt.Sprintf(`%s Where content_type NOT IN (%s)`, sql, orm.ParamPlaceholderForIn(len(foreignLayerTypes)))
+		params = append(params, foreignLayerTypes...)
+	}
+
+	var totalSize int64
+	if err := o.Raw(sql, params...).QueryRow(&totalSize); err != nil {
+		return 0, err
+	}
+
+	return totalSize, nil
+}
+
 func (d *dao) CreateProjectBlob(ctx context.Context, projectID, blobID int64) (int64, error) {
 	o, err := orm.FromContext(ctx)
 	if err != nil {
@@ -317,4 +367,37 @@ func (d *dao) DeleteProjectBlob(ctx context.Context, projectID int64, blobIDs ..
 
 	_, err = qs.Delete()
 	return err
+}
+
+func (d *dao) DeleteBlob(ctx context.Context, id int64) error {
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return err
+	}
+	n, err := ormer.Delete(&models.Blob{
+		ID: id,
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return errors.NotFoundError(nil).WithMessage("blob %d not found", id)
+	}
+	return nil
+}
+
+func (d *dao) GetBlobsNotRefedByProjectBlob(ctx context.Context, timeWindowHours int64) ([]*models.Blob, error) {
+	var noneRefed []*models.Blob
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return noneRefed, err
+	}
+
+	sql := fmt.Sprintf(`SELECT b.id, b.digest, b.content_type, b.status, b.version, b.size FROM blob AS b LEFT JOIN project_blob pb ON b.id = pb.blob_id WHERE pb.id IS NULL AND b.update_time <= now() - interval '%d hours';`, timeWindowHours)
+	_, err = ormer.Raw(sql).QueryRows(&noneRefed)
+	if err != nil {
+		return noneRefed, err
+	}
+
+	return noneRefed, nil
 }

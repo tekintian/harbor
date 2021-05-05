@@ -15,10 +15,11 @@
 package readonly
 
 import (
-	serror "github.com/goharbor/harbor/src/server/error"
+	"github.com/goharbor/harbor/src/lib/config"
+	lib_http "github.com/goharbor/harbor/src/lib/http"
+	"github.com/goharbor/harbor/src/lib/orm"
 	"net/http"
 
-	"github.com/goharbor/harbor/src/core/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/server/middleware"
 )
@@ -33,7 +34,7 @@ var (
 	// DefaultConfig default readonly config
 	DefaultConfig = Config{
 		ReadOnly: func(r *http.Request) bool {
-			return config.ReadOnly()
+			return config.ReadOnly(orm.Context())
 		},
 	}
 
@@ -70,7 +71,7 @@ func MiddlewareWithConfig(config Config, skippers ...middleware.Skipper) func(ht
 	return middleware.New(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if config.ReadOnly(r) {
 			pkgE := errors.New(nil).WithCode(errors.DENIED).WithMessage("The system is in read only mode. Any modification is prohibited.")
-			serror.SendError(w, pkgE)
+			lib_http.SendError(w, pkgE)
 			return
 		}
 

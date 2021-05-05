@@ -1,5 +1,6 @@
 import { Injectable, Inject } from '@angular/core';
 import { DOCUMENT } from '@angular/common';
+import { environment } from "../../environments/environment";
 
 @Injectable({
   providedIn: 'root'
@@ -18,12 +19,12 @@ loadStyle(styleName: string) {
         'client-theme'
     ) as HTMLLinkElement;
     if (themeLink) {
-        themeLink.href = styleName;
+        themeLink.href = `${styleName}?buildTimeStamp=${environment.buildTimestamp}`;
     } else {
         const style = this.document.createElement('link');
         style.id = 'client-theme';
         style.rel = 'stylesheet';
-        style.href = `${styleName}`;
+        style.href = `${styleName}?buildTimeStamp=${environment.buildTimestamp}`;
 
         head.appendChild(style);
     }

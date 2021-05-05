@@ -16,6 +16,10 @@ package v2auth
 
 import (
 	"context"
+	"fmt"
+	testutils "github.com/goharbor/harbor/src/common/utils/test"
+	"github.com/goharbor/harbor/src/lib/config"
+
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,68 +31,47 @@ import (
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/common/security"
-	"github.com/goharbor/harbor/src/core/config"
-	"github.com/goharbor/harbor/src/core/promgr/metamgr"
+	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
 	securitytesting "github.com/goharbor/harbor/src/testing/common/security"
+	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
 	"github.com/goharbor/harbor/src/testing/mock"
 	"github.com/stretchr/testify/assert"
 )
 
-type mockPM struct{}
-
-func (mockPM) Get(projectIDOrName interface{}) (*models.Project, error) {
-	name := projectIDOrName.(string)
-	id, _ := strconv.Atoi(strings.TrimPrefix(name, "project_"))
-	if id == 0 {
-		return nil, nil
-	}
-	return &models.Project{
-		ProjectID: int64(id),
-		Name:      name,
-	}, nil
-}
-
-func (mockPM) Create(*models.Project) (int64, error) {
-	panic("implement me")
-}
-
-func (mockPM) Delete(projectIDOrName interface{}) error {
-	panic("implement me")
-}
-
-func (mockPM) Update(projectIDOrName interface{}, project *models.Project) error {
-	panic("implement me")
-}
-
-func (mockPM) List(query *models.ProjectQueryParam) (*models.ProjectQueryResult, error) {
-	panic("implement me")
-}
-
-func (mockPM) IsPublic(projectIDOrName interface{}) (bool, error) {
-	return false, nil
-}
-
-func (mockPM) Exists(projectIDOrName interface{}) (bool, error) {
-	panic("implement me")
-}
-
-func (mockPM) GetPublic() ([]*models.Project, error) {
-	panic("implement me")
-}
-
-func (mockPM) GetAuthorized(user *models.User) ([]*models.Project, error) {
-	return nil, nil
-}
-
-func (mockPM) GetMetadataManager() metamgr.ProjectMetadataManager {
-	panic("implement me")
-}
-
 func TestMain(m *testing.M) {
+	testutils.InitDatabaseFromEnv()
+	ctl := &projecttesting.Controller{}
+
+	mockGet := func(ctx context.Context,
+		projectIDOrName interface{}, options ...project.Option) (*models.Project, error) {
+		name := projectIDOrName.(string)
+		id, _ := strconv.Atoi(strings.TrimPrefix(name, "project_"))
+		if id == 0 {
+			return nil, fmt.Errorf("%s not found", name)
+		}
+		return &models.Project{
+			ProjectID: int64(id),
+			Name:      name,
+		}, nil
+	}
+	mock.OnAnything(ctl, "Get").Return(
+		func(ctx context.Context,
+			projectIDOrName interface{}, options ...project.Option) *models.Project {
+			p, _ := mockGet(ctx, projectIDOrName, options...)
+			return p
+		},
+		func(ctx context.Context,
+			projectIDOrName interface{}, options ...project.Option) error {
+			_, err := mockGet(ctx, projectIDOrName, options...)
+			return err
+		},
+	)
+
 	checker = reqChecker{
-		pm: mockPM{},
+		ctl: ctl,
 	}
 	conf := map[string]interface{}{
 		common.ExtEndpoint: "https://harbor.test",
@@ -108,7 +91,7 @@ func TestMiddleware(t *testing.T) {
 	sc := &securitytesting.Context{}
 	sc.On("IsAuthenticated").Return(true)
 	sc.On("IsSysAdmin").Return(false)
-	mock.OnAnything(sc, "Can").Return(func(action types.Action, resource types.Resource) bool {
+	mock.OnAnything(sc, "Can").Return(func(ctx context.Context, action types.Action, resource types.Resource) bool {
 		perms := map[string]map[rbac.Action]struct{}{
 			"/project/1/repository": {
 				rbac.ActionPull: {},
@@ -170,6 +153,10 @@ func TestMiddleware(t *testing.T) {
 	req1a, _ := http.NewRequest(http.MethodGet, "/v2/project_1/hello-world/manifest/v1", nil)
 	req1b, _ := http.NewRequest(http.MethodDelete, "/v2/project_1/hello-world/manifest/v1", nil)
 	req1c, _ := http.NewRequest(http.MethodHead, "/v2/project_1/hello-world/manifest/v1", nil)
+	req1d, _ := http.NewRequest(http.MethodGet, "/v2/project_1/hello-world/manifest/v1", nil)
+	req1d.Header.Set("Authorization", "Bearer xxx")
+	req1e, _ := http.NewRequest(http.MethodHead, "/v2/project_1/hello-world/manifest/v1", nil)
+	req1e.Header.Set("Authorization", "Bearer xxx")
 	req2, _ := http.NewRequest(http.MethodGet, "/v2/library/ubuntu/manifest/14.04", nil)
 	req3, _ := http.NewRequest(http.MethodGet, "/v2/_catalog", nil)
 	req4, _ := http.NewRequest(http.MethodPost, "/v2/project_1/ubuntu/blobs/uploads/mount=?mount=sha256:08e4a417ff4e3913d8723a05cc34055db01c2fd165b588e049c5bad16ce6094f&from=project_2/ubuntu", nil)
@@ -182,7 +169,7 @@ func TestMiddleware(t *testing.T) {
 	}{
 		{
 			input:  req1a.WithContext(ctx1),
-			status: http.StatusOK,
+			status: http.StatusUnauthorized,
 		},
 		{
 			input:  req1b.WithContext(ctx1),
@@ -191,6 +178,14 @@ func TestMiddleware(t *testing.T) {
 		{
 			input:  req1c.WithContext(ctx1),
 			status: http.StatusUnauthorized,
+		},
+		{
+			input:  req1d.WithContext(ctx1),
+			status: http.StatusOK,
+		},
+		{
+			input:  req1e.WithContext(ctx1),
+			status: http.StatusOK,
 		},
 		{
 			input:  req2.WithContext(ctx2),
@@ -262,7 +257,7 @@ func TestGetChallenge(t *testing.T) {
 		},
 		{
 			request:   req2,
-			challenge: `Bearer realm="https://harbor.test/service/token",service="harbor-registry"`,
+			challenge: `Basic realm="harbor"`,
 		},
 		{
 			request:   req2x,
@@ -286,4 +281,66 @@ func TestGetChallenge(t *testing.T) {
 		assert.Equal(t, c.challenge, getChallenge(c.request, acs))
 	}
 
+}
+
+func TestMatch(t *testing.T) {
+	cases := []struct {
+		reqHost string
+		rawURL  string
+		expect  bool
+	}{
+		{
+			"abc.com",
+			"http://abc.com",
+			true,
+		},
+		{
+			"abc.com",
+			"https://abc.com",
+			true,
+		},
+		{
+			"abc.com:80",
+			"http://abc.com",
+			true,
+		},
+		{
+			"abc.com:80",
+			"https://abc.com",
+			false,
+		},
+		{
+			"abc.com:443",
+			"http://abc.com",
+			false,
+		},
+		{
+			"abc.com:443",
+			"https://abc.com",
+			true,
+		},
+		{
+			"abcd.com:443",
+			"https://abc.com",
+			false,
+		},
+		{
+			"abc.com:8443",
+			"https://abc.com:8443",
+			true,
+		},
+		{
+			"abc.com",
+			"https://abc.com:443",
+			true,
+		},
+		{
+			"abc.com",
+			"http://abc.com:443",
+			false,
+		},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.expect, match(context.Background(), c.reqHost, c.rawURL))
+	}
 }

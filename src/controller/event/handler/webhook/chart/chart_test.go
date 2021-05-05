@@ -15,45 +15,86 @@
 package chart
 
 import (
-	common_dao "github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/controller/event"
+	"context"
+	testutils "github.com/goharbor/harbor/src/common/utils/test"
+	"github.com/goharbor/harbor/src/lib/config"
+	_ "github.com/goharbor/harbor/src/pkg/config/db"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
+	"os"
 	"testing"
 
 	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/core/config"
+	"github.com/goharbor/harbor/src/controller/event"
+	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/pkg/notification"
-	testingnotification "github.com/goharbor/harbor/src/testing/pkg/notification"
+	"github.com/goharbor/harbor/src/pkg/notification/policy/model"
+	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
+	"github.com/goharbor/harbor/src/testing/mock"
+	testingnotification "github.com/goharbor/harbor/src/testing/pkg/notification/policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func TestMain(m *testing.M) {
+	// do some initialization
+	testutils.InitDatabaseFromEnv()
+	os.Exit(m.Run())
+}
+
 func TestChartPreprocessHandler_Handle(t *testing.T) {
-	common_dao.PrepareTestForPostgresSQL()
 	PolicyMgr := notification.PolicyMgr
 	defer func() {
 		notification.PolicyMgr = PolicyMgr
 	}()
-	notification.PolicyMgr = &testingnotification.FakedPolicyMgr{}
+	policyMgrMock := &testingnotification.Manager{}
+	notification.PolicyMgr = policyMgrMock
+
+	ProjectCtl := project.Ctl
+	defer func() {
+		project.Ctl = ProjectCtl
+	}()
+	projectCtl := &projecttesting.Controller{}
+	project.Ctl = projectCtl
+
+	name := "project_for_test_chart_event_preprocess"
+	mock.OnAnything(projectCtl, "Get").Return(func(ctx context.Context, projectIDOrName interface{}, options ...project.Option) *models.Project {
+		return &models.Project{
+			Name:    name,
+			OwnerID: 1,
+			Metadata: map[string]string{
+				models.ProMetaEnableContentTrust:   "true",
+				models.ProMetaPreventVul:           "true",
+				models.ProMetaSeverity:             "Low",
+				models.ProMetaReuseSysCVEAllowlist: "false",
+			},
+		}
+	}, nil)
+	projectCtl.On("Get")
+	policyMgrMock.On("GetRelatedPolices", mock.Anything, mock.Anything, mock.Anything).Return([]*model.Policy{
+		{
+			ID: 1,
+			EventTypes: []string{
+				event.TopicUploadChart,
+				event.TopicDownloadChart,
+				event.TopicDeleteChart,
+				event.TopicPushArtifact,
+				event.TopicPullArtifact,
+				event.TopicDeleteArtifact,
+				event.TopicScanningFailed,
+				event.TopicScanningCompleted,
+				event.TopicQuotaExceed,
+			},
+			Targets: []model.EventTarget{
+				{
+					Type:    "http",
+					Address: "http://127.0.0.1:8080",
+				},
+			},
+		},
+	}, nil)
 
 	handler := &Handler{}
 	config.Init()
-
-	name := "project_for_test_chart_event_preprocess"
-	id, _ := config.GlobalProjectMgr.Create(&models.Project{
-		Name:    name,
-		OwnerID: 1,
-		Metadata: map[string]string{
-			models.ProMetaEnableContentTrust:   "true",
-			models.ProMetaPreventVul:           "true",
-			models.ProMetaSeverity:             "Low",
-			models.ProMetaReuseSysCVEWhitelist: "false",
-		},
-	})
-	defer func(id int64) {
-		if err := config.GlobalProjectMgr.Delete(id); err != nil {
-			t.Logf("failed to delete project %d: %v", id, err)
-		}
-	}(id)
 
 	type args struct {
 		data interface{}
@@ -120,7 +161,7 @@ func TestChartPreprocessHandler_Handle(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := handler.Handle(tt.args.data)
+			err := handler.Handle(context.TODO(), tt.args.data)
 			if tt.wantErr {
 				require.NotNil(t, err, "Error: %s", err)
 				return
@@ -133,4 +174,9 @@ func TestChartPreprocessHandler_Handle(t *testing.T) {
 func TestChartPreprocessHandler_IsStateful(t *testing.T) {
 	handler := &Handler{}
 	assert.False(t, handler.IsStateful())
+}
+
+func TestChartPreprocessHandler_Name(t *testing.T) {
+	handler := &Handler{}
+	assert.Equal(t, "ChartWebhook", handler.Name())
 }

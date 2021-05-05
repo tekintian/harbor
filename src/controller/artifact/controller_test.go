@@ -16,23 +16,28 @@ package artifact
 
 import (
 	"context"
+	"github.com/goharbor/harbor/src/testing/pkg/immutable"
 	"testing"
 	"time"
 
 	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/controller/artifact/processor/chart"
+	"github.com/goharbor/harbor/src/controller/artifact/processor/cnab"
+	"github.com/goharbor/harbor/src/controller/artifact/processor/image"
 	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/icon"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/artifact"
+	"github.com/goharbor/harbor/src/pkg/label/model"
 	model_tag "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 	tagtesting "github.com/goharbor/harbor/src/testing/controller/tag"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
 	arttesting "github.com/goharbor/harbor/src/testing/pkg/artifact"
 	artrashtesting "github.com/goharbor/harbor/src/testing/pkg/artifactrash"
 	"github.com/goharbor/harbor/src/testing/pkg/blob"
-	immutesting "github.com/goharbor/harbor/src/testing/pkg/immutabletag"
 	"github.com/goharbor/harbor/src/testing/pkg/label"
 	"github.com/goharbor/harbor/src/testing/pkg/registry"
 	repotesting "github.com/goharbor/harbor/src/testing/pkg/repository"
@@ -60,9 +65,9 @@ type controllerTestSuite struct {
 	artrashMgr   *artrashtesting.FakeManager
 	blobMgr      *blob.Manager
 	tagCtl       *tagtesting.FakeController
-	labelMgr     *label.FakeManager
+	labelMgr     *label.Manager
 	abstractor   *fakeAbstractor
-	immutableMtr *immutesting.FakeMatcher
+	immutableMtr *immutable.FakeMatcher
 	regCli       *registry.FakeClient
 }
 
@@ -72,9 +77,9 @@ func (c *controllerTestSuite) SetupTest() {
 	c.artrashMgr = &artrashtesting.FakeManager{}
 	c.blobMgr = &blob.Manager{}
 	c.tagCtl = &tagtesting.FakeController{}
-	c.labelMgr = &label.FakeManager{}
+	c.labelMgr = &label.Manager{}
 	c.abstractor = &fakeAbstractor{}
-	c.immutableMtr = &immutesting.FakeMatcher{}
+	c.immutableMtr = &immutable.FakeMatcher{}
 	c.regCli = &registry.FakeClient{}
 	c.ctl = &controller{
 		repoMgr:      c.repoMgr,
@@ -114,19 +119,76 @@ func (c *controllerTestSuite) TestAssembleArtifact() {
 	}
 	c.tagCtl.On("List").Return([]*tag.Tag{tg}, nil)
 	ctx := lib.WithAPIVersion(nil, "2.0")
-	lb := &models.Label{
+	lb := &model.Label{
 		ID:   1,
 		Name: "label",
 	}
-	c.labelMgr.On("ListByArtifact").Return([]*models.Label{
+	c.labelMgr.On("ListByArtifact", mock.Anything, mock.Anything).Return([]*model.Label{
 		lb,
 	}, nil)
 	artifact := c.ctl.assembleArtifact(ctx, art, option)
 	c.Require().NotNil(artifact)
 	c.Equal(art.ID, artifact.ID)
+	c.Equal(icon.DigestOfIconDefault, artifact.Icon)
 	c.Contains(artifact.Tags, tg)
 	c.Contains(artifact.Labels, lb)
 	// TODO check other fields of option
+}
+
+func (c *controllerTestSuite) TestPopulateIcon() {
+	cases := []struct {
+		art *artifact.Artifact
+		ico string
+	}{
+		{
+			art: &artifact.Artifact{
+				ID:     1,
+				Digest: "sha256:123",
+				Type:   image.ArtifactTypeImage,
+			},
+			ico: icon.DigestOfIconImage,
+		},
+		{
+			art: &artifact.Artifact{
+				ID:     2,
+				Digest: "sha256:456",
+				Type:   cnab.ArtifactTypeCNAB,
+			},
+			ico: icon.DigestOfIconCNAB,
+		},
+		{
+			art: &artifact.Artifact{
+				ID:     3,
+				Digest: "sha256:1234",
+				Type:   chart.ArtifactTypeChart,
+			},
+			ico: icon.DigestOfIconChart,
+		},
+		{
+			art: &artifact.Artifact{
+				ID:     4,
+				Digest: "sha256:1234",
+				Type:   "other",
+			},
+			ico: icon.DigestOfIconDefault,
+		},
+		{
+			art: &artifact.Artifact{
+				ID:     5,
+				Digest: "sha256:2345",
+				Type:   image.ArtifactTypeImage,
+				Icon:   "sha256:abcd",
+			},
+			ico: "sha256:abcd",
+		},
+	}
+	for _, cs := range cases {
+		a := &Artifact{
+			Artifact: *cs.art,
+		}
+		c.ctl.populateIcon(a)
+		c.Equal(cs.ico, a.Icon)
+	}
 }
 
 func (c *controllerTestSuite) TestEnsureArtifact() {
@@ -476,13 +538,13 @@ func (c *controllerTestSuite) TestGetAddition() {
 }
 
 func (c *controllerTestSuite) TestAddTo() {
-	c.labelMgr.On("AddTo").Return(nil)
-	err := c.ctl.AddLabel(nil, 1, 1)
+	c.labelMgr.On("AddTo", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	err := c.ctl.AddLabel(context.Background(), 1, 1)
 	c.Require().Nil(err)
 }
 
 func (c *controllerTestSuite) TestRemoveFrom() {
-	c.labelMgr.On("RemoveFrom").Return(nil)
+	c.labelMgr.On("RemoveFrom", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	err := c.ctl.RemoveLabel(nil, 1, 1)
 	c.Require().Nil(err)
 }

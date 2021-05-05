@@ -27,11 +27,11 @@ import (
 	"time"
 
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/config"
 	commonhttp "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/logger"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/robot/model"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
@@ -92,7 +92,7 @@ type Job struct{}
 
 // MaxFails for defining the number of retries
 func (j *Job) MaxFails() uint {
-	return 3
+	return 1
 }
 
 // MaxCurrency is implementation of same method in Interface.
@@ -102,7 +102,7 @@ func (j *Job) MaxCurrency() uint {
 
 // ShouldRetry indicates if the job should be retried
 func (j *Job) ShouldRetry() bool {
-	return true
+	return false
 }
 
 // Validate the parameters of this job
@@ -455,12 +455,12 @@ func getInternalTokenServiceEndpoint(ctx job.Context) (string, error) {
 		return "", errors.Errorf("failed to get config manager")
 	}
 
-	return cfgMgr.Get(common.CoreURL).GetString() + "/service/token", nil
+	return cfgMgr.Get(ctx.SystemContext(), common.CoreURL).GetString() + "/service/token", nil
 }
 
 // makeBasicAuthorization creates authorization from a robot account based on the arguments for scanning.
 func makeBasicAuthorization(robotAccount *model.Robot) (string, error) {
-	basic := fmt.Sprintf("%s:%s", robotAccount.Name, robotAccount.Token)
+	basic := fmt.Sprintf("%s:%s", robotAccount.Name, robotAccount.Secret)
 	encoded := base64.StdEncoding.EncodeToString([]byte(basic))
 
 	return fmt.Sprintf("Basic %s", encoded), nil

@@ -16,9 +16,10 @@
     <global-message [isAppLevel]="true"></global-message>
     <navigator (showAccountSettingsModal)="openModal($event)" (showDialogModalAction)="openModal($event)"></navigator>
     <div class="content-container">
-        <div class="content-area" [class.container-override]="showSearch"
+        <div #scrollDiv class="content-area" [class.container-override]="showSearch"
             [class.content-area-override]="!shouldOverrideContent"
-            [class.start-content-padding]="shouldOverrideContent">
+            [class.start-content-padding]="shouldOverrideContent"
+             (scroll)="publishScrollEvent()">
             <global-message [isAppLevel]="false"></global-message>
             <!-- Only appear when searching -->
             <search-result></search-result>
@@ -43,6 +44,10 @@
                             <clr-icon shape="users" clrVerticalNavIcon></clr-icon>
                             {{'SIDE_NAV.SYSTEM_MGMT.USER' | translate}}
                         </a>
+                         <a clrVerticalNavLink routerLink="/harbor/robot-accounts" routerLinkActive="active">
+                            <clr-icon shape="robot-head" clrVerticalNavIcon></clr-icon>
+                             {{"SYSTEM_ROBOT.ROBOT_ACCOUNT_NAV" | translate}}
+                        </a>
                         <a *ngIf='isLdapMode || isHttpAuthMode || isOidcMode' clrVerticalNavLink
                             routerLink="/harbor/groups" routerLinkActive="active">
                             <clr-icon shape="users" clrVerticalNavIcon></clr-icon>
@@ -55,6 +60,10 @@
                         <a clrVerticalNavLink routerLink="/harbor/replications" routerLinkActive="active">
                             <clr-icon shape="cloud-traffic" clrVerticalNavIcon></clr-icon>
                             {{'SIDE_NAV.SYSTEM_MGMT.REPLICATION' | translate}}
+                        </a>
+                        <a clrVerticalNavLink routerLink="/harbor/distribution/instances" routerLinkActive="active">
+                            <clr-icon shape="share"></clr-icon>
+                            {{'SIDE_NAV.DISTRIBUTIONS.NAME' | translate}}
                         </a>
                         <a *ngIf="!withAdmiral" clrVerticalNavLink routerLink="/harbor/labels"
                             routerLinkActive="active">
@@ -80,28 +89,22 @@
                     </clr-vertical-nav-group-children>
                 </clr-vertical-nav-group>
             </div>
-            <div>
-            <ng-container *ngFor="let theme of themeArray;let i=index">
-                 <ng-container *ngIf="theme.showStyle === styleMode">
-                        <a clrVerticalNavLink (click)="themeChanged(theme)">
-                            <clr-icon clrVerticalNavIcon size="20" *ngIf="styleMode ==='DARK'" shape="sun" class="is-solid"></clr-icon>
-                            <clr-icon clrVerticalNavIcon size="20" *ngIf="styleMode ==='LIGHT'" shape="moon" class="is-solid"></clr-icon>
+            <div class="mb-1">
+                <ng-container *ngFor="let theme of themeArray;let i=index">
+                    <ng-container *ngIf="theme.showStyle === styleMode">
+                        <a class="pointer" clrVerticalNavLink (click)="themeChanged(theme)">
+                            <clr-icon clrVerticalNavIcon size="20" *ngIf="styleMode ==='DARK'" shape="sun"
+                                      class="is-solid"></clr-icon>
+                            <clr-icon clrVerticalNavIcon size="20" *ngIf="styleMode ==='LIGHT'" shape="moon"
+                                      class="is-solid"></clr-icon>
                             {{ theme.text | translate }}
                         </a>
-                  </ng-container>
-            </ng-container>
-            <clr-vertical-nav-group routerLinkActive="active">
-                <clr-icon shape="network-globe" clrVerticalNavIcon></clr-icon>
-                {{'SIDE_NAV.API_EXPLORER' | translate}}
-                <a routerLink="#" hidden aria-hidden="true"></a>
-                <clr-vertical-nav-group-children *clrIfExpanded="true">
-                    <a class="font-size-13" clrVerticalNavLink target="_blank" routerLink="/devcenter-api-2.0"
-                        routerLinkActive="active">
-                        <clr-icon shape="network-globe" clrVerticalNavIcon></clr-icon>
-                        {{'SIDE_NAV.HARBOR_API_MANAGEMENT' | translate}}
-                    </a>
-                </clr-vertical-nav-group-children>
-            </clr-vertical-nav-group>
+                    </ng-container>
+                </ng-container>
+                <a clrVerticalNavLink routerLinkActive="active" target="_blank" routerLink="/devcenter-api-2.0">
+                    <clr-icon shape="network-globe" clrVerticalNavIcon></clr-icon>
+                    {{'SIDE_NAV.HARBOR_API_MANAGEMENT' | translate}}
+                </a>
             </div>
         </clr-vertical-nav>
         <hbr-operation-model *ngIf="isUserExisting"></hbr-operation-model>
@@ -109,5 +112,5 @@
 </clr-main-container>
 <account-settings-modal></account-settings-modal>
 <password-setting></password-setting>
-<confiramtion-dialog></confiramtion-dialog>
+<global-confirmation-dialog></global-confirmation-dialog>
 <about-dialog></about-dialog>

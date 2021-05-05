@@ -15,23 +15,23 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/goharbor/harbor/src/lib/config"
 	"net/http"
 
 	"github.com/ghodss/yaml"
 	"github.com/goharbor/harbor/src/common/api"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
+	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/common/utils"
-	"github.com/goharbor/harbor/src/core/config"
-	"github.com/goharbor/harbor/src/core/promgr"
+	"github.com/goharbor/harbor/src/controller/p2p/preheat"
+	projectcontroller "github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/pkg/project"
-	"github.com/goharbor/harbor/src/pkg/repository"
-	"github.com/goharbor/harbor/src/pkg/retention"
 	"github.com/goharbor/harbor/src/pkg/scheduler"
 )
 
@@ -40,36 +40,27 @@ const (
 	userSessionKey      = "user"
 )
 
-// the managers/controllers used globally
-var (
-	projectMgr          project.Manager
-	retentionScheduler  scheduler.Scheduler
-	retentionMgr        retention.Manager
-	retentionLauncher   retention.Launcher
-	retentionController retention.APIController
-)
-
 // BaseController ...
 type BaseController struct {
 	api.BaseAPI
 	// SecurityCtx is the security context used to authN &authZ
 	SecurityCtx security.Context
-	// ProjectMgr is the project manager which abstracts the operations
+	// ProjectCtl is the project controller which abstracts the operations
 	// related to projects
-	ProjectMgr promgr.ProjectManager
+	ProjectCtl projectcontroller.Controller
 }
 
 // Prepare inits security context and project manager from request
 // context
 func (b *BaseController) Prepare() {
-	ctx, ok := security.FromContext(b.Ctx.Request.Context())
+	ctx, ok := security.FromContext(b.Context())
 	if !ok {
 		log.Errorf("failed to get security context")
 		b.SendInternalServerError(errors.New(""))
 		return
 	}
 	b.SecurityCtx = ctx
-	b.ProjectMgr = config.GlobalProjectMgr
+	b.ProjectCtl = projectcontroller.Ctl
 }
 
 // RequireAuthenticated returns true when the request is authenticated
@@ -84,25 +75,18 @@ func (b *BaseController) RequireAuthenticated() bool {
 
 // HasProjectPermission returns true when the request has action permission on project subresource
 func (b *BaseController) HasProjectPermission(projectIDOrName interface{}, action rbac.Action, subresource ...rbac.Resource) (bool, error) {
-	projectID, projectName, err := utils.ParseProjectIDOrName(projectIDOrName)
+	_, _, err := utils.ParseProjectIDOrName(projectIDOrName)
 	if err != nil {
 		return false, err
 	}
 
-	if projectName != "" {
-		project, err := b.ProjectMgr.Get(projectName)
-		if err != nil {
-			return false, err
-		}
-		if project == nil {
-			return false, errors.NotFoundError(nil).WithMessage("project %s not found", projectName)
-		}
-
-		projectID = project.ProjectID
+	project, err := b.ProjectCtl.Get(b.Context(), projectIDOrName)
+	if err != nil {
+		return false, err
 	}
 
-	resource := rbac.NewProjectNamespace(projectID).Resource(subresource...)
-	if !b.SecurityCtx.Can(action, resource) {
+	resource := rbac_project.NewNamespace(project.ProjectID).Resource(subresource...)
+	if !b.SecurityCtx.Can(b.Context(), action, resource) {
 		return false, nil
 	}
 
@@ -114,22 +98,39 @@ func (b *BaseController) HasProjectPermission(projectIDOrName interface{}, actio
 func (b *BaseController) RequireProjectAccess(projectIDOrName interface{}, action rbac.Action, subresource ...rbac.Resource) bool {
 	hasPermission, err := b.HasProjectPermission(projectIDOrName, action, subresource...)
 	if err != nil {
-		b.SendError(err)
-
+		if errors.IsNotFoundErr(err) {
+			b.handleProjectNotFound(projectIDOrName)
+		} else {
+			b.SendError(err)
+		}
 		return false
 	}
 
 	if !hasPermission {
-		if !b.SecurityCtx.IsAuthenticated() {
-			b.SendError(errors.UnauthorizedError(errors.New("Unauthorized")))
-		} else {
-			b.SendError(errors.New(errors.New(b.SecurityCtx.GetUsername())).WithCode(errors.ForbiddenCode))
-		}
-
+		b.SendPermissionError()
 		return false
 	}
 
 	return true
+}
+
+// This should be called when a project is not found, if the caller is a system admin it returns 404.
+// If it's regular user, it will render permission error
+func (b *BaseController) handleProjectNotFound(projectIDOrName interface{}) {
+	if b.SecurityCtx.IsSysAdmin() {
+		b.SendNotFoundError(fmt.Errorf("project %v not found", projectIDOrName))
+	} else {
+		b.SendPermissionError()
+	}
+}
+
+// SendPermissionError is a shortcut for sending different http error based on authentication status.
+func (b *BaseController) SendPermissionError() {
+	if !b.SecurityCtx.IsAuthenticated() {
+		b.SendUnAuthorizedError(errors.New("UnAuthorized"))
+	} else {
+		b.SendForbiddenError(errors.New(b.SecurityCtx.GetUsername()))
+	}
 }
 
 // WriteJSONData writes the JSON data to the client.
@@ -160,37 +161,20 @@ func (b *BaseController) PopulateUserSession(u models.User) {
 
 // Init related objects/configurations for the API controllers
 func Init() error {
-	registerHealthCheckers()
-
 	// init chart controller
 	if err := initChartController(); err != nil {
 		return err
 	}
 
-	// init project manager
-	initProjectManager()
-
-	initRetentionScheduler()
-
-	retentionMgr = retention.NewManager()
-
-	retentionLauncher = retention.NewLauncher(projectMgr, repository.Mgr, retentionMgr)
-
-	retentionController = retention.NewAPIController(retentionMgr, projectMgr, repository.Mgr, retentionScheduler, retentionLauncher)
-
-	callbackFun := func(p interface{}) error {
-		str, ok := p.(string)
-		if !ok {
-			return fmt.Errorf("the type of param %v isn't string", p)
-		}
-		param := &retention.TriggerParam{}
-		if err := json.Unmarshal([]byte(str), param); err != nil {
+	p2pPreheatCallbackFun := func(ctx context.Context, p string) error {
+		param := &preheat.TriggerParam{}
+		if err := json.Unmarshal([]byte(p), param); err != nil {
 			return fmt.Errorf("failed to unmarshal the param: %v", err)
 		}
-		_, err := retentionController.TriggerRetentionExec(param.PolicyID, param.Trigger, false)
+		_, err := preheat.Enf.EnforcePolicy(ctx, param.PolicyID)
 		return err
 	}
-	err := scheduler.Register(retention.SchedulerCallback, callbackFun)
+	err := scheduler.RegisterCallbackFunc(preheat.SchedulerCallback, p2pPreheatCallbackFun)
 
 	return err
 }
@@ -208,12 +192,4 @@ func initChartController() error {
 
 	chartController = chartCtl
 	return nil
-}
-
-func initProjectManager() {
-	projectMgr = project.Mgr
-}
-
-func initRetentionScheduler() {
-	retentionScheduler = scheduler.GlobalScheduler
 }

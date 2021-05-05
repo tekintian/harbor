@@ -14,10 +14,16 @@
 
 package controller
 
-//go:generate mockery -case snake -dir ../../controller/artifact -name Controller -output ./artifact -outpkg artifact
-//go:generate mockery -case snake -dir ../../controller/blob -name Controller -output ./blob -outpkg blob
-//go:generate mockery -case snake -dir ../../controller/project -name Controller -output ./project -outpkg project
-//go:generate mockery -case snake -dir ../../controller/quota -name Controller -output ./quota -outpkg quota
-//go:generate mockery -case snake -dir ../../controller/scan -name Controller -output ./scan -outpkg scan
-//go:generate mockery -case snake -dir ../../controller/scan -name Checker -output ./scan -outpkg scan
-//go:generate mockery -case snake -dir ../../controller/scanner -name Controller -output ./scanner -outpkg scanner
+//go:generate mockery --case snake --dir ../../controller/artifact --name Controller --output ./artifact --outpkg artifact
+//go:generate mockery --case snake --dir ../../controller/blob --name Controller --output ./blob --outpkg blob
+//go:generate mockery --case snake --dir ../../controller/project --name Controller --output ./project --outpkg project
+//go:generate mockery --case snake --dir ../../controller/quota --name Controller --output ./quota --outpkg quota
+//go:generate mockery --case snake --dir ../../controller/scan --name Controller --output ./scan --outpkg scan
+//go:generate mockery --case snake --dir ../../controller/scan --name Checker --output ./scan --outpkg scan
+//go:generate mockery --case snake --dir ../../controller/scanner --name Controller --output ./scanner --outpkg scanner
+//go:generate mockery --case snake --dir ../../controller/replication --name Controller --output ./replication --outpkg replication
+//go:generate mockery --case snake --dir ../../controller/robot --name Controller --output ./robot --outpkg robot
+//go:generate mockery --case snake --dir ../../controller/proxy --name RemoteInterface --output ./proxy --outpkg proxy
+//go:generate mockery --case snake --dir ../../controller/retention --name Controller --output ./retention --outpkg retention
+//go:generate mockery --case snake --dir ../../controller/config --name Controller --output ./config --outpkg config
+//go:generate mockery --case snake --dir ../../controller/user --name Controller --output ./user --outpkg user

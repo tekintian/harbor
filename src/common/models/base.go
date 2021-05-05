@@ -25,18 +25,8 @@ func init() {
 		new(Role),
 		new(RepoRecord),
 		new(ProjectMetadata),
-		new(ConfigEntry),
-		new(Label),
 		new(ResourceLabel),
-		new(UserGroup),
-		new(AdminJob),
 		new(JobLog),
 		new(OIDCUser),
-		new(NotificationPolicy),
-		new(NotificationJob),
-		new(Blob),
-		new(ProjectBlob),
-		new(ArtifactAndBlob),
-		new(CVEWhitelist),
 	)
 }

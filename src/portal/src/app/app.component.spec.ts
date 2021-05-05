@@ -13,16 +13,18 @@
 // limitations under the License.
 /* tslint:disable:no-unused-variable */
 
-import { TestBed, async, ComponentFixture } from '@angular/core/testing';
+import { TestBed, waitForAsync, ComponentFixture } from '@angular/core/testing';
 import { Title } from '@angular/platform-browser';
 import { TranslateModule, TranslateService } from '@ngx-translate/core';
 import { CookieService } from 'ngx-cookie';
 import { CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
-import { SessionService } from './shared/session.service';
+import { SessionService } from './shared/services/session.service';
 import { AppConfigService } from './services/app-config.service';
 import { AppComponent } from './app.component';
 import { ClarityModule } from "@clr/angular";
 import { APP_BASE_HREF } from "@angular/common";
+import { SharedTestingModule } from "./shared/shared.module";
+import { SkinableConfig } from "./services/skinable-config.service";
 
 describe('AppComponent', () => {
     let fixture: ComponentFixture<any>;
@@ -42,6 +44,25 @@ describe('AppComponent', () => {
         setTitle: function () {
         }
     };
+    const fakeSkinableConfig = {
+        getSkinConfig() {
+            return {
+                "headerBgColor": {
+                    "darkMode": "",
+                    "lightMode": ""
+                },
+                "loginBgImg": "",
+                "loginTitle": "",
+                "product": {
+                    "name": "test",
+                    "logo": "",
+                    "introduction": ""
+                }
+            };
+        },
+        setTitleIcon() {
+        }
+    };
 
     beforeEach(() => {
         TestBed.configureTestingModule({
@@ -49,16 +70,15 @@ describe('AppComponent', () => {
                 AppComponent
             ],
             imports: [
-                ClarityModule,
-                TranslateModule.forRoot()
+                SharedTestingModule,
             ],
             providers: [
-                TranslateService,
                 { provide: APP_BASE_HREF, useValue: '/' },
                 { provide: CookieService, useValue: fakeCookieService },
                 { provide: SessionService, useValue: fakeSessionService },
                 { provide: AppConfigService, useValue: fakeAppConfigService },
                 { provide: Title, useValue: fakeTitle },
+                { provide: SkinableConfig, useValue: fakeSkinableConfig },
             ],
             schemas: [CUSTOM_ELEMENTS_SCHEMA]
         });
@@ -74,7 +94,7 @@ describe('AppComponent', () => {
         fixture.destroy();
     });
 
-    it('should create the app', async(() => {
+    it('should create the app', waitForAsync(() => {
         expect(compiled).toBeTruthy();
     }));
 

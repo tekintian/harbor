@@ -22,18 +22,16 @@ const (
 
 	// ImageScanJob is name of scan job it will be used as key to register to job service.
 	ImageScanJob = "IMAGE_SCAN"
-	// ImageScanAllJob is the name of "scanall" job in job service
-	ImageScanAllJob = "IMAGE_SCAN_ALL"
-	// ImageGC the name of image garbage collection job in job service
-	ImageGC = "IMAGE_GC"
+	// GarbageCollection job name
+	GarbageCollection = "GARBAGE_COLLECTION"
 	// Replication : the name of the replication job in job service
 	Replication = "REPLICATION"
-	// ReplicationScheduler : the name of the replication scheduler job in job service
-	ReplicationScheduler = "IMAGE_REPLICATE"
 	// WebhookJob : the name of the webhook job in job service
 	WebhookJob = "WEBHOOK"
 	// SlackJob : the name of the slack job in job service
 	SlackJob = "SLACK"
 	// Retention : the name of the retention job
 	Retention = "RETENTION"
+	// P2PPreheat : the name of the P2P preheat job
+	P2PPreheat = "P2P_PREHEAT"
 )

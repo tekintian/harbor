@@ -27,12 +27,15 @@ import (
 
 	"github.com/goharbor/harbor/src/chartserver"
 	"github.com/goharbor/harbor/src/common"
+	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/pkg/user"
 
 	"github.com/dghubble/sling"
 	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/dao/project"
 	common_http "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/pkg/member"
+	memberModels "github.com/goharbor/harbor/src/pkg/member/models"
 	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -220,7 +223,7 @@ func TestMain(m *testing.M) {
 		"delete from harbor_label",
 		"delete from robot",
 		"delete from user_group",
-		"delete from project_member",
+		"delete from project_member where id > 1",
 	})
 
 	ret := m.Run()
@@ -249,8 +252,8 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
-
-	if projAdminPMID, err = project.AddProjectMember(models.Member{
+	ctx := orm.Context()
+	if projAdminPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
 		Role:       common.RoleProjectAdmin,
 		EntityID:   int(projAdminID),
@@ -268,8 +271,7 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
-
-	if projAdminRobotPMID, err = project.AddProjectMember(models.Member{
+	if projAdminRobotPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
 		Role:       common.RoleProjectAdmin,
 		EntityID:   int(projAdminRobotID),
@@ -288,7 +290,7 @@ func prepare() error {
 		return err
 	}
 
-	if projDeveloperPMID, err = project.AddProjectMember(models.Member{
+	if projDeveloperPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
 		Role:       common.RoleDeveloper,
 		EntityID:   int(projDeveloperID),
@@ -307,7 +309,7 @@ func prepare() error {
 		return err
 	}
 
-	if projGuestPMID, err = project.AddProjectMember(models.Member{
+	if projGuestPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
 		Role:       common.RoleGuest,
 		EntityID:   int(projGuestID),
@@ -325,7 +327,7 @@ func prepare() error {
 	if err != nil {
 		return err
 	}
-	if projLimitedGuestPMID, err = project.AddProjectMember(models.Member{
+	if projLimitedGuestPMID, err = member.Mgr.AddProjectMember(ctx, memberModels.Member{
 		ProjectID:  1,
 		Role:       common.RoleLimitedGuest,
 		EntityID:   int(projLimitedGuestID),
@@ -337,16 +339,17 @@ func prepare() error {
 }
 
 func clean() {
+	ctx := orm.Context()
 	pmids := []int{projAdminPMID, projDeveloperPMID, projGuestPMID}
 
 	for _, id := range pmids {
-		if err := project.DeleteProjectMemberByID(id); err != nil {
+		if err := member.Mgr.Delete(ctx, 1, id); err != nil {
 			fmt.Printf("failed to clean up member %d from project library: %v", id, err)
 		}
 	}
 	userids := []int64{nonSysAdminID, projAdminID, projDeveloperID, projGuestID}
 	for _, id := range userids {
-		if err := dao.DeleteUser(int(id)); err != nil {
+		if err := user.Mgr.Delete(ctx, int(id)); err != nil {
 			fmt.Printf("failed to clean up user %d: %v \n", id, err)
 		}
 	}

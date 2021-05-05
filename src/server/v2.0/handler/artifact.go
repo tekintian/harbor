@@ -16,9 +16,8 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/controller/event/metadata"
-	"github.com/goharbor/harbor/src/pkg/notification"
 	"net/http"
 	"strings"
 	"time"
@@ -29,11 +28,15 @@ import (
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/artifact"
-	"github.com/goharbor/harbor/src/controller/artifact/processor"
+	"github.com/goharbor/harbor/src/controller/event/metadata"
+	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/repository"
 	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/controller/tag"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/pkg/notification"
+	"github.com/goharbor/harbor/src/pkg/scan/report"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/assembler"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
@@ -41,13 +44,10 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-const (
-	vulnerabilitiesAddition = "vulnerabilities"
-)
-
 func newArtifactAPI() *artifactAPI {
 	return &artifactAPI{
 		artCtl:  artifact.Ctl,
+		proCtl:  project.Ctl,
 		repoCtl: repository.Ctl,
 		scanCtl: scan.DefaultController,
 		tagCtl:  tag.Ctl,
@@ -57,6 +57,7 @@ func newArtifactAPI() *artifactAPI {
 type artifactAPI struct {
 	BaseAPI
 	artCtl  artifact.Controller
+	proCtl  project.Controller
 	repoCtl repository.Controller
 	scanCtl scan.Controller
 	tagCtl  tag.Controller
@@ -76,7 +77,7 @@ func (a *artifactAPI) ListArtifacts(ctx context.Context, params operation.ListAr
 	}
 
 	// set query
-	query, err := a.BuildQuery(ctx, params.Q, params.Page, params.PageSize)
+	query, err := a.BuildQuery(ctx, params.Q, params.Sort, params.Page, params.PageSize)
 	if err != nil {
 		return a.SendError(ctx, err)
 	}
@@ -97,7 +98,7 @@ func (a *artifactAPI) ListArtifacts(ctx context.Context, params operation.ListAr
 		return a.SendError(ctx, err)
 	}
 
-	assembler := assembler.NewVulAssembler(boolValue(params.WithScanOverview))
+	assembler := assembler.NewVulAssembler(lib.BoolValue(params.WithScanOverview), parseScanReportMimeTypes(params.XAcceptVulnerabilities))
 	var artifacts []*models.Artifact
 	for _, art := range arts {
 		artifact := &model.Artifact{}
@@ -128,7 +129,7 @@ func (a *artifactAPI) GetArtifact(ctx context.Context, params operation.GetArtif
 	art := &model.Artifact{}
 	art.Artifact = *artifact
 
-	assembler.NewVulAssembler(boolValue(params.WithScanOverview)).WithArtifacts(art).Assemble(ctx)
+	assembler.NewVulAssembler(lib.BoolValue(params.WithScanOverview), parseScanReportMimeTypes(params.XAcceptVulnerabilities)).WithArtifacts(art).Assemble(ctx)
 
 	return operation.NewGetArtifactOK().WithPayload(art.ToSwagger())
 }
@@ -149,6 +150,10 @@ func (a *artifactAPI) DeleteArtifact(ctx context.Context, params operation.Delet
 
 func (a *artifactAPI) CopyArtifact(ctx context.Context, params operation.CopyArtifactParams) middleware.Responder {
 	if err := a.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionCreate, rbac.ResourceArtifact); err != nil {
+		return a.SendError(ctx, err)
+	}
+
+	if err := a.requireNonProxyCacheProject(ctx, params.ProjectName); err != nil {
 		return a.SendError(ctx, err)
 	}
 
@@ -200,6 +205,11 @@ func (a *artifactAPI) CreateTag(ctx context.Context, params operation.CreateTagP
 	if err := a.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionCreate, rbac.ResourceTag); err != nil {
 		return a.SendError(ctx, err)
 	}
+
+	if err := a.requireNonProxyCacheProject(ctx, params.ProjectName); err != nil {
+		return a.SendError(ctx, err)
+	}
+
 	art, err := a.artCtl.GetByReference(ctx, fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName),
 		params.Reference, &artifact.Option{
 			WithTag: true,
@@ -225,6 +235,18 @@ func (a *artifactAPI) CreateTag(ctx context.Context, params operation.CreateTagP
 
 	// as we provide no API for get the single tag, ignore setting the location header here
 	return operation.NewCreateTagCreated()
+}
+
+func (a *artifactAPI) requireNonProxyCacheProject(ctx context.Context, name string) error {
+	pro, err := a.proCtl.GetByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	if pro.IsProxy() {
+		return errors.New(nil).WithCode(errors.MethodNotAllowedCode).
+			WithMessage("the operation isn't supported for a proxy cache project")
+	}
+	return nil
 }
 
 func (a *artifactAPI) DeleteTag(ctx context.Context, params operation.DeleteTagParams) middleware.Responder {
@@ -270,7 +292,7 @@ func (a *artifactAPI) ListTags(ctx context.Context, params operation.ListTagsPar
 		return a.SendError(ctx, err)
 	}
 	// set query
-	query, err := a.BuildQuery(ctx, params.Q, params.Page, params.PageSize)
+	query, err := a.BuildQuery(ctx, params.Q, params.Sort, params.Page, params.PageSize)
 	if err != nil {
 		return a.SendError(ctx, err)
 	}
@@ -303,12 +325,65 @@ func (a *artifactAPI) ListTags(ctx context.Context, params operation.ListTagsPar
 
 	var ts []*models.Tag
 	for _, tag := range tags {
-		ts = append(ts, tag.ToSwagger())
+		ts = append(ts, model.NewTag(tag).ToSwagger())
 	}
 	return operation.NewListTagsOK().
 		WithXTotalCount(total).
 		WithLink(a.Links(ctx, params.HTTPRequest.URL, total, query.PageNumber, query.PageSize).String()).
 		WithPayload(ts)
+}
+
+func (a *artifactAPI) GetVulnerabilitiesAddition(ctx context.Context, params operation.GetVulnerabilitiesAdditionParams) middleware.Responder {
+	if err := a.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionRead, rbac.ResourceArtifactAddition); err != nil {
+		return a.SendError(ctx, err)
+	}
+
+	artifact, err := a.artCtl.GetByReference(ctx, fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName), params.Reference, nil)
+	if err != nil {
+		return a.SendError(ctx, err)
+	}
+
+	vulnerabilities := make(map[string]interface{})
+
+	for _, mimeType := range parseScanReportMimeTypes(params.XAcceptVulnerabilities) {
+		reports, err := a.scanCtl.GetReport(ctx, artifact, []string{mimeType})
+		if err != nil {
+			return a.SendError(ctx, err)
+		}
+
+		for _, rp := range reports {
+			// Resolve scan report data only when it is ready
+			if len(rp.Report) == 0 {
+				continue
+			}
+
+			vrp, err := report.ResolveData(rp.MimeType, []byte(rp.Report), report.WithArtifactDigest(rp.Digest))
+			if err != nil {
+				return a.SendError(ctx, err)
+			}
+
+			if v, ok := vulnerabilities[rp.MimeType]; ok {
+				r, err := report.Merge(rp.MimeType, v, vrp)
+				if err != nil {
+					return a.SendError(ctx, err)
+				}
+				vulnerabilities[rp.MimeType] = r
+			} else {
+				vulnerabilities[rp.MimeType] = vrp
+			}
+		}
+
+		if len(vulnerabilities) != 0 {
+			break
+		}
+	}
+
+	content, _ := json.Marshal(vulnerabilities)
+
+	return middleware.ResponderFunc(func(w http.ResponseWriter, p runtime.Producer) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(content)
+	})
 }
 
 func (a *artifactAPI) GetAddition(ctx context.Context, params operation.GetAdditionParams) middleware.Responder {
@@ -321,13 +396,7 @@ func (a *artifactAPI) GetAddition(ctx context.Context, params operation.GetAddit
 		return a.SendError(ctx, err)
 	}
 
-	var addition *processor.Addition
-
-	if params.Addition == vulnerabilitiesAddition {
-		addition, err = resolveVulnerabilitiesAddition(ctx, artifact)
-	} else {
-		addition, err = a.artCtl.GetAddition(ctx, artifact.ID, strings.ToUpper(params.Addition))
-	}
+	addition, err := a.artCtl.GetAddition(ctx, artifact.ID, strings.ToUpper(params.Addition))
 	if err != nil {
 		return a.SendError(ctx, err)
 	}
@@ -369,7 +438,7 @@ func (a *artifactAPI) RemoveLabel(ctx context.Context, params operation.RemoveLa
 func option(withTag, withImmutableStatus, withLabel, withSignature *bool) *artifact.Option {
 	option := &artifact.Option{
 		WithTag:   true, // return the tag by default
-		WithLabel: boolValue(withLabel),
+		WithLabel: lib.BoolValue(withLabel),
 	}
 
 	if withTag != nil {
@@ -378,8 +447,8 @@ func option(withTag, withImmutableStatus, withLabel, withSignature *bool) *artif
 
 	if option.WithTag {
 		option.TagOption = &tag.Option{
-			WithImmutableStatus: boolValue(withImmutableStatus),
-			WithSignature:       boolValue(withSignature),
+			WithImmutableStatus: lib.BoolValue(withImmutableStatus),
+			WithSignature:       lib.BoolValue(withSignature),
 		}
 	}
 

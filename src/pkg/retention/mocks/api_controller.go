@@ -3,8 +3,9 @@
 package mocks
 
 import (
+	"context"
+	"github.com/goharbor/harbor/src/lib/q"
 	policy "github.com/goharbor/harbor/src/pkg/retention/policy"
-	q "github.com/goharbor/harbor/src/pkg/retention/q"
 	mock "github.com/stretchr/testify/mock"
 
 	retention "github.com/goharbor/harbor/src/pkg/retention"
@@ -16,7 +17,7 @@ type APIController struct {
 }
 
 // CreateRetention provides a mock function with given fields: p
-func (_m *APIController) CreateRetention(p *policy.Metadata) (int64, error) {
+func (_m *APIController) CreateRetention(ctx context.Context, p *policy.Metadata) (int64, error) {
 	ret := _m.Called(p)
 
 	var r0 int64
@@ -37,7 +38,7 @@ func (_m *APIController) CreateRetention(p *policy.Metadata) (int64, error) {
 }
 
 // DeleteRetention provides a mock function with given fields: id
-func (_m *APIController) DeleteRetention(id int64) error {
+func (_m *APIController) DeleteRetention(ctx context.Context, id int64) error {
 	ret := _m.Called(id)
 
 	var r0 error
@@ -51,7 +52,7 @@ func (_m *APIController) DeleteRetention(id int64) error {
 }
 
 // GetRetention provides a mock function with given fields: id
-func (_m *APIController) GetRetention(id int64) (*policy.Metadata, error) {
+func (_m *APIController) GetRetention(ctx context.Context, id int64) (*policy.Metadata, error) {
 	ret := _m.Called(id)
 
 	var r0 *policy.Metadata
@@ -74,7 +75,7 @@ func (_m *APIController) GetRetention(id int64) (*policy.Metadata, error) {
 }
 
 // GetRetentionExec provides a mock function with given fields: eid
-func (_m *APIController) GetRetentionExec(eid int64) (*retention.Execution, error) {
+func (_m *APIController) GetRetentionExec(ctx context.Context, eid int64) (*retention.Execution, error) {
 	ret := _m.Called(eid)
 
 	var r0 *retention.Execution
@@ -97,7 +98,7 @@ func (_m *APIController) GetRetentionExec(eid int64) (*retention.Execution, erro
 }
 
 // GetRetentionExecTaskLog provides a mock function with given fields: taskID
-func (_m *APIController) GetRetentionExecTaskLog(taskID int64) ([]byte, error) {
+func (_m *APIController) GetRetentionExecTaskLog(ctx context.Context, taskID int64) ([]byte, error) {
 	ret := _m.Called(taskID)
 
 	var r0 []byte
@@ -119,8 +120,16 @@ func (_m *APIController) GetRetentionExecTaskLog(taskID int64) ([]byte, error) {
 	return r0, r1
 }
 
+// GetRetentionExecTask provides a mock function with given fields: taskID
+func (_m *APIController) GetRetentionExecTask(ctx context.Context, taskID int64) (*retention.Task, error) {
+	return &retention.Task{
+		ID:          1,
+		ExecutionID: 1,
+	}, nil
+}
+
 // GetTotalOfRetentionExecTasks provides a mock function with given fields: executionID
-func (_m *APIController) GetTotalOfRetentionExecTasks(executionID int64) (int64, error) {
+func (_m *APIController) GetTotalOfRetentionExecTasks(ctx context.Context, executionID int64) (int64, error) {
 	ret := _m.Called(executionID)
 
 	var r0 int64
@@ -141,7 +150,7 @@ func (_m *APIController) GetTotalOfRetentionExecTasks(executionID int64) (int64,
 }
 
 // GetTotalOfRetentionExecs provides a mock function with given fields: policyID
-func (_m *APIController) GetTotalOfRetentionExecs(policyID int64) (int64, error) {
+func (_m *APIController) GetTotalOfRetentionExecs(ctx context.Context, policyID int64) (int64, error) {
 	ret := _m.Called(policyID)
 
 	var r0 int64
@@ -162,7 +171,7 @@ func (_m *APIController) GetTotalOfRetentionExecs(policyID int64) (int64, error)
 }
 
 // ListRetentionExecTasks provides a mock function with given fields: executionID, query
-func (_m *APIController) ListRetentionExecTasks(executionID int64, query *q.Query) ([]*retention.Task, error) {
+func (_m *APIController) ListRetentionExecTasks(ctx context.Context, executionID int64, query *q.Query) ([]*retention.Task, error) {
 	ret := _m.Called(executionID, query)
 
 	var r0 []*retention.Task
@@ -185,7 +194,7 @@ func (_m *APIController) ListRetentionExecTasks(executionID int64, query *q.Quer
 }
 
 // ListRetentionExecs provides a mock function with given fields: policyID, query
-func (_m *APIController) ListRetentionExecs(policyID int64, query *q.Query) ([]*retention.Execution, error) {
+func (_m *APIController) ListRetentionExecs(ctx context.Context, policyID int64, query *q.Query) ([]*retention.Execution, error) {
 	ret := _m.Called(policyID, query)
 
 	var r0 []*retention.Execution
@@ -208,7 +217,7 @@ func (_m *APIController) ListRetentionExecs(policyID int64, query *q.Query) ([]*
 }
 
 // OperateRetentionExec provides a mock function with given fields: eid, action
-func (_m *APIController) OperateRetentionExec(eid int64, action string) error {
+func (_m *APIController) OperateRetentionExec(ctx context.Context, eid int64, action string) error {
 	ret := _m.Called(eid, action)
 
 	var r0 error
@@ -222,7 +231,7 @@ func (_m *APIController) OperateRetentionExec(eid int64, action string) error {
 }
 
 // TriggerRetentionExec provides a mock function with given fields: policyID, trigger, dryRun
-func (_m *APIController) TriggerRetentionExec(policyID int64, trigger string, dryRun bool) (int64, error) {
+func (_m *APIController) TriggerRetentionExec(ctx context.Context, policyID int64, trigger string, dryRun bool) (int64, error) {
 	ret := _m.Called(policyID, trigger, dryRun)
 
 	var r0 int64
@@ -243,7 +252,7 @@ func (_m *APIController) TriggerRetentionExec(policyID int64, trigger string, dr
 }
 
 // UpdateRetention provides a mock function with given fields: p
-func (_m *APIController) UpdateRetention(p *policy.Metadata) error {
+func (_m *APIController) UpdateRetention(ctx context.Context, p *policy.Metadata) error {
 	ret := _m.Called(p)
 
 	var r0 error

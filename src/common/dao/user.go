@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/astaxie/beego/orm"
-
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -96,68 +94,6 @@ func LoginByDb(auth models.AuthModel) (*models.User, error) {
 	return &user, nil
 }
 
-// GetTotalOfUsers ...
-func GetTotalOfUsers(query *models.UserQuery) (int64, error) {
-	return userQueryConditions(query).Count()
-}
-
-// ListUsers lists all users according to different conditions.
-func ListUsers(query *models.UserQuery) ([]models.User, error) {
-	qs := userQueryConditions(query)
-	if query != nil && query.Pagination != nil {
-		offset := (query.Pagination.Page - 1) * query.Pagination.Size
-		qs = qs.Offset(offset).Limit(query.Pagination.Size)
-	}
-	users := []models.User{}
-	_, err := qs.OrderBy("username").All(&users)
-	return users, err
-}
-
-func userQueryConditions(query *models.UserQuery) orm.QuerySeter {
-	qs := GetOrmer().QueryTable(&models.User{}).Filter("deleted", 0)
-
-	if query == nil {
-		// Exclude admin account, see https://github.com/goharbor/harbor/issues/2527
-		return qs.Filter("user_id__gt", 1)
-	}
-
-	if len(query.UserIDs) > 0 {
-		qs = qs.Filter("user_id__in", query.UserIDs)
-	} else {
-		// Exclude admin account when not filter by UserIDs, see https://github.com/goharbor/harbor/issues/2527
-		qs = qs.Filter("user_id__gt", 1)
-	}
-
-	if len(query.Username) > 0 {
-		qs = qs.Filter("username__contains", query.Username)
-	}
-
-	if len(query.Email) > 0 {
-		qs = qs.Filter("email__contains", query.Email)
-	}
-
-	return qs
-}
-
-// ToggleUserAdminRole gives a user admin role.
-func ToggleUserAdminRole(userID int, hasAdmin bool) error {
-	o := GetOrmer()
-	queryParams := make([]interface{}, 1)
-	sql := `update harbor_user set sysadmin_flag = ? where user_id = ?`
-	queryParams = append(queryParams, hasAdmin)
-	queryParams = append(queryParams, userID)
-	r, err := o.Raw(sql, queryParams).Exec()
-	if err != nil {
-		return err
-	}
-
-	if _, err := r.RowsAffected(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // ChangeUserPassword ...
 func ChangeUserPassword(u models.User) error {
 	u.UpdateTime = time.Now()
@@ -199,26 +135,6 @@ func ResetUserPassword(u models.User, rawPassword string) error {
 func UpdateUserResetUUID(u models.User) error {
 	o := GetOrmer()
 	_, err := o.Raw(`update harbor_user set reset_uuid=? where email=?`, u.ResetUUID, u.Email).Exec()
-	return err
-}
-
-// DeleteUser ...
-func DeleteUser(userID int) error {
-	o := GetOrmer()
-
-	user, err := GetUser(models.User{
-		UserID: userID,
-	})
-	if err != nil {
-		return err
-	}
-
-	name := fmt.Sprintf("%s#%d", user.Username, user.UserID)
-	email := fmt.Sprintf("%s#%d", user.Email, user.UserID)
-
-	_, err = o.Raw(`update harbor_user
-		set deleted = true, username = ?, email = ?
-		where user_id = ?`, name, email, userID).Exec()
 	return err
 }
 

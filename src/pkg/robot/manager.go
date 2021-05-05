@@ -1,6 +1,7 @@
 package robot
 
 import (
+	"context"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/robot/dao"
 	"github.com/goharbor/harbor/src/pkg/robot/model"
@@ -8,59 +9,77 @@ import (
 
 var (
 	// Mgr is a global variable for the default robot account manager implementation
-	Mgr = NewDefaultRobotAccountManager()
+	Mgr = NewManager()
 )
 
 // Manager ...
 type Manager interface {
-	// GetRobotAccount ...
-	GetRobotAccount(id int64) (*model.Robot, error)
+	// Get ...
+	Get(ctx context.Context, id int64) (*model.Robot, error)
 
-	// CreateRobotAccount ...
-	CreateRobotAccount(m *model.Robot) (int64, error)
+	// Count returns the total count of robots according to the query
+	Count(ctx context.Context, query *q.Query) (total int64, err error)
 
-	// DeleteRobotAccount ...
-	DeleteRobotAccount(id int64) error
+	// Create ...
+	Create(ctx context.Context, m *model.Robot) (int64, error)
 
-	// UpdateRobotAccount ...
-	UpdateRobotAccount(m *model.Robot) error
+	// Delete ...
+	Delete(ctx context.Context, id int64) error
 
-	// ListRobotAccount ...
-	ListRobotAccount(query *q.Query) ([]*model.Robot, error)
+	// DeleteByProjectID ...
+	DeleteByProjectID(ctx context.Context, projectID int64) error
+
+	// Update ...
+	Update(ctx context.Context, m *model.Robot, props ...string) error
+
+	// List ...
+	List(ctx context.Context, query *q.Query) ([]*model.Robot, error)
 }
 
-type defaultRobotManager struct {
-	dao dao.RobotAccountDao
+var _ Manager = &manager{}
+
+type manager struct {
+	dao dao.DAO
 }
 
-// NewDefaultRobotAccountManager return a new instance of defaultRobotManager
-func NewDefaultRobotAccountManager() Manager {
-	return &defaultRobotManager{
+// NewManager return a new instance of defaultRobotManager
+func NewManager() Manager {
+	return &manager{
 		dao: dao.New(),
 	}
 }
 
-// GetRobotAccount ...
-func (drm *defaultRobotManager) GetRobotAccount(id int64) (*model.Robot, error) {
-	return drm.dao.GetRobotAccount(id)
+// Get ...
+func (m *manager) Get(ctx context.Context, id int64) (*model.Robot, error) {
+	return m.dao.Get(ctx, id)
 }
 
-// CreateRobotAccount ...
-func (drm *defaultRobotManager) CreateRobotAccount(r *model.Robot) (int64, error) {
-	return drm.dao.CreateRobotAccount(r)
+// Count ...
+func (m *manager) Count(ctx context.Context, query *q.Query) (total int64, err error) {
+	return m.dao.Count(ctx, query)
 }
 
-// DeleteRobotAccount ...
-func (drm *defaultRobotManager) DeleteRobotAccount(id int64) error {
-	return drm.dao.DeleteRobotAccount(id)
+// Create ...
+func (m *manager) Create(ctx context.Context, r *model.Robot) (int64, error) {
+	return m.dao.Create(ctx, r)
 }
 
-// UpdateRobotAccount ...
-func (drm *defaultRobotManager) UpdateRobotAccount(r *model.Robot) error {
-	return drm.dao.UpdateRobotAccount(r)
+// Delete ...
+func (m *manager) Delete(ctx context.Context, id int64) error {
+	return m.dao.Delete(ctx, id)
 }
 
-// ListRobotAccount ...
-func (drm *defaultRobotManager) ListRobotAccount(query *q.Query) ([]*model.Robot, error) {
-	return drm.dao.ListRobotAccounts(query)
+// DeleteByProjectID ...
+func (m *manager) DeleteByProjectID(ctx context.Context, projectID int64) error {
+	return m.dao.DeleteByProjectID(ctx, projectID)
+}
+
+// Update ...
+func (m *manager) Update(ctx context.Context, r *model.Robot, props ...string) error {
+	return m.dao.Update(ctx, r, props...)
+}
+
+// List ...
+func (m *manager) List(ctx context.Context, query *q.Query) ([]*model.Robot, error) {
+	return m.dao.List(ctx, query)
 }

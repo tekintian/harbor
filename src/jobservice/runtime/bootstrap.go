@@ -32,6 +32,7 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/jobservice/job/impl"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/gc"
+	"github.com/goharbor/harbor/src/jobservice/job/impl/legacy"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/notification"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/replication"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/sample"
@@ -42,32 +43,36 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/worker"
 	"github.com/goharbor/harbor/src/jobservice/worker/cworker"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/metric"
+	redislib "github.com/goharbor/harbor/src/lib/redis"
+	"github.com/goharbor/harbor/src/pkg/p2p/preheat"
 	"github.com/goharbor/harbor/src/pkg/retention"
-	sc "github.com/goharbor/harbor/src/pkg/scan"
-	"github.com/goharbor/harbor/src/pkg/scan/all"
+	"github.com/goharbor/harbor/src/pkg/scan"
 	"github.com/goharbor/harbor/src/pkg/scheduler"
 	"github.com/gomodule/redigo/redis"
 )
 
 const (
 	dialConnectionTimeout = 30 * time.Second
-	healthCheckPeriod     = time.Minute
-	dialReadTimeout       = healthCheckPeriod + 10*time.Second
+	dialReadTimeout       = 10 * time.Second
 	dialWriteTimeout      = 10 * time.Second
 )
 
 // JobService ...
 var JobService = &Bootstrap{}
 
+// workerPoolID
+var workerPoolID string
+
 // Bootstrap is coordinating process to help load and start the other components to serve.
 type Bootstrap struct {
-	jobConextInitializer job.ContextInitializer
+	jobContextInitializer job.ContextInitializer
 }
 
 // SetJobContextInitializer set the job context initializer
 func (bs *Bootstrap) SetJobContextInitializer(initializer job.ContextInitializer) {
 	if initializer != nil {
-		bs.jobConextInitializer = initializer
+		bs.jobContextInitializer = initializer
 	}
 }
 
@@ -81,8 +86,8 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 	}
 
 	// Build specified job context
-	if bs.jobConextInitializer != nil {
-		rootContext.JobContext, err = bs.jobConextInitializer(ctx)
+	if bs.jobContextInitializer != nil {
+		rootContext.JobContext, err = bs.jobContextInitializer(ctx)
 		if err != nil {
 			return errors.Errorf("initialize job context error: %s", err)
 		}
@@ -120,7 +125,12 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 		// Create hook agent, it's a singleton object
 		hookAgent := hook.NewAgent(rootContext, namespace, redisPool)
 		hookCallback := func(URL string, change *job.StatusChange) error {
-			msg := fmt.Sprintf("status change: job=%s, status=%s", change.JobID, change.Status)
+			msg := fmt.Sprintf(
+				"status change: job=%s, status=%s, revision=%d",
+				change.JobID,
+				change.Status,
+				change.Metadata.Revision,
+			)
 			if !utils.IsEmptyStr(change.CheckIn) {
 				// Ignore the real check in message to avoid too big message stream
 				cData := change.CheckIn
@@ -132,12 +142,17 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 
 			evt := &hook.Event{
 				URL:       URL,
-				Timestamp: time.Now().Unix(),
+				Timestamp: change.Metadata.UpdateTime, // use update timestamp to avoid duplicated resending.
 				Data:      change,
 				Message:   msg,
 			}
 
-			return hookAgent.Trigger(evt)
+			// Hook event sending should not influence the main job flow (because job may call checkin() in the job run).
+			if err := hookAgent.Trigger(evt); err != nil {
+				logger.Error(err)
+			}
+
+			return nil
 		}
 
 		// Create job life cycle management controller
@@ -160,18 +175,14 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 		if err = lcmCtl.Serve(); err != nil {
 			return errors.Errorf("start life cycle controller error: %s", err)
 		}
-
-		// Start agent
-		// Non blocking call
-		if err = hookAgent.Serve(); err != nil {
-			return errors.Errorf("start hook agent error: %s", err)
-		}
 	} else {
 		return errors.Errorf("worker backend '%s' is not supported", cfg.PoolConfig.Backend)
 	}
 
 	// Initialize controller
 	ctl := core.NewController(backendWorker, manager)
+	// Initialize Prometheus backend
+	go bs.createMetricServer(cfg)
 	// Start the API server
 	apiServer := bs.createAPIServer(ctx, cfg, ctl)
 
@@ -203,6 +214,7 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 	node := ctx.Value(utils.NodeID)
 	// Blocking here
 	logger.Infof("API server is serving at %d with [%s] mode at node [%s]", cfg.Port, cfg.Protocol, node)
+	metric.JobserviceInfo.WithLabelValues(node.(string), workerPoolID, fmt.Sprint(cfg.PoolConfig.WorkerCount)).Set(1)
 	if er := apiServer.Start(); er != nil {
 		if !terminated {
 			// Tell the listening goroutine
@@ -217,6 +229,14 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 	rootContext.WG.Wait()
 
 	return
+}
+
+func (bs *Bootstrap) createMetricServer(cfg *config.Configuration) {
+	if cfg.Metric != nil && cfg.Metric.Enabled {
+		metric.RegisterJobServiceCollectors()
+		metric.ServeProm(cfg.Metric.Path, cfg.Metric.Port)
+		logger.Infof("Prom backend is serving at %s:%d", cfg.Metric.Path, cfg.Metric.Port)
+	}
 }
 
 // Load and run the API server.
@@ -247,54 +267,49 @@ func (bs *Bootstrap) loadAndRunRedisWorkerPool(
 	lcmCtl lcm.Controller,
 ) (worker.Interface, error) {
 	redisWorker := cworker.NewWorker(ctx, ns, workers, redisPool, lcmCtl)
+	workerPoolID = redisWorker.GetPoolID()
+
 	// Register jobs here
 	if err := redisWorker.RegisterJobs(
 		map[string]interface{}{
 			// Only for debugging and testing purpose
 			job.SampleJob: (*sample.Job)(nil),
 			// Functional jobs
-			job.ImageScanJob:           (*sc.Job)(nil),
-			job.ImageScanAllJob:        (*all.Job)(nil),
-			job.ImageGC:                (*gc.GarbageCollector)(nil),
+			job.ImageScanJob:           (*scan.Job)(nil),
+			job.GarbageCollection:      (*gc.GarbageCollector)(nil),
 			job.Replication:            (*replication.Replication)(nil),
-			job.ReplicationScheduler:   (*replication.Scheduler)(nil),
 			job.Retention:              (*retention.Job)(nil),
 			scheduler.JobNameScheduler: (*scheduler.PeriodicJob)(nil),
 			job.WebhookJob:             (*notification.WebhookJob)(nil),
 			job.SlackJob:               (*notification.SlackJob)(nil),
+			job.P2PPreheat:             (*preheat.Job)(nil),
+			// In v2.2 we migrate the scheduled replication, garbage collection and scan all to
+			// the scheduler mechanism, the following three jobs are kept for the legacy jobs
+			// and they can be removed after several releases
+			"IMAGE_REPLICATE": (*legacy.ReplicationScheduler)(nil),
+			"IMAGE_GC":        (*legacy.GarbageCollectionScheduler)(nil),
+			"IMAGE_SCAN_ALL":  (*legacy.ScanAllScheduler)(nil),
 		}); err != nil {
 		// exit
 		return nil, err
 	}
-
 	if err := redisWorker.Start(); err != nil {
 		return nil, err
 	}
-
 	return redisWorker, nil
 }
 
 // Get a redis connection pool
 func (bs *Bootstrap) getRedisPool(redisPoolConfig *config.RedisPoolConfig) *redis.Pool {
-	return &redis.Pool{
-		MaxIdle:     6,
-		Wait:        true,
-		IdleTimeout: time.Duration(redisPoolConfig.IdleTimeoutSecond) * time.Second,
-		Dial: func() (redis.Conn, error) {
-			return redis.DialURL(
-				redisPoolConfig.RedisURL,
-				redis.DialConnectTimeout(dialConnectionTimeout),
-				redis.DialReadTimeout(dialReadTimeout),
-				redis.DialWriteTimeout(dialWriteTimeout),
-			)
-		},
-		TestOnBorrow: func(c redis.Conn, t time.Time) error {
-			if time.Since(t) < time.Minute {
-				return nil
-			}
-
-			_, err := c.Do("PING")
-			return err
-		},
+	if pool, err := redislib.GetRedisPool("JobService", redisPoolConfig.RedisURL, &redislib.PoolParam{
+		PoolMaxIdle:           6,
+		PoolIdleTimeout:       time.Duration(redisPoolConfig.IdleTimeoutSecond) * time.Second,
+		DialConnectionTimeout: dialConnectionTimeout,
+		DialReadTimeout:       dialReadTimeout,
+		DialWriteTimeout:      dialWriteTimeout,
+	}); err != nil {
+		panic(err)
+	} else {
+		return pool
 	}
 }

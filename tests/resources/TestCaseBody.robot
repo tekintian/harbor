@@ -23,7 +23,7 @@ Body Of Manage project publicity
     ${d}=    Get Current Date  result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user007  Test1@34
-    Create An New Project  project${d}  public=true
+    Create An New Project And Go Into Project  project${d}  public=true
 
     Push image  ${ip}  user007  Test1@34  project${d}  hello-world:latest
     Pull image  ${ip}  user008  Test1@34  project${d}  hello-world:latest
@@ -41,7 +41,7 @@ Body Of Manage project publicity
     Logout Harbor
     Sign In Harbor  ${HARBOR_URL}  user008  Test1@34
     Project Should Not Display  project${d}
-    Cannot Pull image  ${ip}  user008  Test1@34  project${d}  hello-world:latest
+    Cannot Pull Image  ${ip}  user008  Test1@34  project${d}  hello-world:latest  err_msg=unauthorized to access repository
 
     Logout Harbor
     Sign In Harbor  ${HARBOR_URL}  user007  Test1@34
@@ -58,8 +58,7 @@ Body Of Scan A Tag In The Repo
     ${d}=  get current date  result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user023  Test1@34
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
+    Create An New Project And Go Into Project  project${d}
     Push Image  ${ip}  user023  Test1@34  project${d}  ${image_argument}:${tag_argument}
     Go Into Project  project${d}
     Go Into Repo  project${d}/${image_argument}
@@ -102,7 +101,7 @@ Body Of View Scan Results
     ${d}=  get current date  result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user025  Test1@34
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Push Image  ${ip}  user025  Test1@34  project${d}  tomcat
     Go Into Project  project${d}
     Go Into Repo  project${d}/tomcat
@@ -131,8 +130,7 @@ Body Of List Helm Charts
     ${d}=   Get Current Date    result_format=%m%s
 
     Sign In Harbor  ${HARBOR_URL}  user027  Test1@34
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
+    Create An New Project And Go Into Project  project${d}
 
     Switch To Project Charts
     Upload Chart files
@@ -155,40 +153,54 @@ Body Of List Helm Charts
     Multi-delete Chart Files  ${prometheus_chart_name}  ${harbor_chart_name}
     Close Browser
 
+Body Of Push Signed Image
+    Init Chrome Driver
+    ${d}=  Get Current Date    result_format=%m%s
+    ${user}=  Set Variable  user010
+    ${pwd}=   Set Variable  Test1@34
+    Sign In Harbor  ${HARBOR_URL}  ${user}  ${pwd}
+    Create An New Project And Go Into Project  project${d}
+    Body Of Admin Push Signed Image  project${d}  tomcat  latest  ${user}  ${pwd}
+    Body Of Admin Push Signed Image  project${d}  alpine  latest  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Close Browser
+
 Body Of Admin Push Signed Image
-    [Arguments]  ${image}=tomcat  ${project}=library  ${with_remove}=${false}
+    [Arguments]  ${project}  ${image}  ${tag}  ${user}  ${pwd}  ${with_remove}=${false}
     Enable Notary Client
 
     Docker Pull  ${LOCAL_REGISTRY}/${LOCAL_REGISTRY_NAMESPACE}/${image}
-    ${rc}  ${output}=  Run And Return Rc And Output  ./tests/robot-cases/Group0-Util/notary-push-image.sh ${ip} ${project} ${image} latest ${notaryServerEndpoint} ${LOCAL_REGISTRY}/${LOCAL_REGISTRY_NAMESPACE}/${image}:latest
+    ${rc}  ${output}=  Run And Return Rc And Output  ./tests/robot-cases/Group0-Util/notary-push-image.sh ${ip} ${project} ${image} ${tag} ${notaryServerEndpoint} ${LOCAL_REGISTRY}/${LOCAL_REGISTRY_NAMESPACE}/${image}:${tag} ${user} ${pwd}
+    Clean All Local Images
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
 
-    ${rc}  ${output}=  Run And Return Rc And Output  curl -u admin:Harbor12345 -s --insecure -H "Content-Type: application/json" -X GET "https://${ip}/api/v2.0/projects/${project}/repositories/${image}/artifacts/latest?with_signature=true"
+    ${rc}  ${output}=  Run And Return Rc And Output  curl -u admin:Harbor12345 -s --insecure -H "Content-Type: application/json" -X GET "https://${ip}/api/v2.0/projects/${project}/repositories/${image}/artifacts/${tag}?with_signature=true"
 
     Log To Console  ${output}
     Should Be Equal As Integers  ${rc}  0
     Should Contain  ${output}  "signed":true
 
-    Run Keyword If  ${with_remove} == ${true}  Remove Notary Signature  ${ip}  ${image}
+    Run Keyword If  ${with_remove} == ${true}  Notary Remove Signature  ${ip}  ${project}  ${image}  ${tag}  ${user}  ${pwd}
 
 Delete A Project Without Sign In Harbor
     [Arguments]  ${harbor_ip}=${ip}  ${username}=${HARBOR_ADMIN}  ${password}=${HARBOR_PASSWORD}
     ${d}=    Get Current Date    result_format=%m%s
     ${project_name}=  Set Variable  000${d}
-    Create An New Project  ${project_name}
-    Push Image  ${harbor_ip}  ${username}  ${password}  ${project_name}  hello-world
+    ${image}=  Set Variable  hello-world
+    Create An New Project And Go Into Project  ${project_name}
+    Push Image  ${harbor_ip}  ${username}  ${password}  ${project_name}  ${image}
     Project Should Not Be Deleted  ${project_name}
     Go Into Project  ${project_name}
-    Delete Repo  ${project_name}
+    Delete Repo  ${project_name}  ${image}
     Navigate To Projects
     Project Should Be Deleted  ${project_name}
 
 Manage Project Member Without Sign In Harbor
     [Arguments]  ${sign_in_user}  ${sign_in_pwd}  ${test_user1}=user005  ${test_user2}=user006  ${is_oidc_mode}=${false}
     ${d}=    Get current Date  result_format=%m%s
-    Create An New Project  project${d}
-    Push image  ip=${ip}  user=${sign_in_user}  pwd=${sign_in_pwd}  project=project${d}  image=hello-world
+    ${image}=  Set Variable  hello-world
+    Create An New Project And Go Into Project  project${d}
+    Push image  ${ip}  ${sign_in_user}  ${sign_in_pwd}  project${d}  ${image}
     Logout Harbor
 
     User Should Not Be A Member Of Project  ${test_user1}  ${sign_in_pwd}  project${d}  is_oidc_mode=${is_oidc_mode}
@@ -198,39 +210,34 @@ Manage Project Member Without Sign In Harbor
     User Should Be Developer  ${test_user1}  ${sign_in_pwd}  project${d}  is_oidc_mode=${is_oidc_mode}
     Change User Role In Project  ${sign_in_user}  ${sign_in_pwd}  project${d}  ${test_user1}  Admin  is_oidc_mode=${is_oidc_mode}
     User Should Be Admin  ${test_user1}  ${sign_in_pwd}  project${d}  ${test_user2}  is_oidc_mode=${is_oidc_mode}
-    Change User Role In Project  ${sign_in_user}  ${sign_in_pwd}  project${d}  ${test_user1}  Master  is_oidc_mode=${is_oidc_mode}
-    User Should Be Master  ${test_user1}  ${sign_in_pwd}  project${d}  is_oidc_mode=${is_oidc_mode}
+    Change User Role In Project  ${sign_in_user}  ${sign_in_pwd}  project${d}  ${test_user1}  Maintainer  is_oidc_mode=${is_oidc_mode}
+    User Should Be Maintainer  ${test_user1}  ${sign_in_pwd}  project${d}  ${image}  is_oidc_mode=${is_oidc_mode}
     Manage Project Member  ${sign_in_user}  ${sign_in_pwd}  project${d}  ${test_user1}  Remove  is_oidc_mode=${is_oidc_mode}
     User Should Not Be A Member Of Project  ${test_user1}  ${sign_in_pwd}  project${d}    is_oidc_mode=${is_oidc_mode}
-    Push image  ip=${ip}  user=${sign_in_user}  pwd=${sign_in_pwd}  project=project${d}  image=hello-world
+    Push image  ${ip}  ${sign_in_user}  ${sign_in_pwd}  project${d}  hello-world
     User Should Be Guest  ${test_user2}  ${sign_in_pwd}  project${d}  is_oidc_mode=${is_oidc_mode}
 
 Helm CLI Push Without Sign In Harbor
     [Arguments]  ${sign_in_user}  ${sign_in_pwd}
     ${d}=   Get Current Date    result_format=%m%s
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Helm Repo Add  ${HARBOR_URL}  ${sign_in_user}  ${sign_in_pwd}  project_name=project${d}
     Helm Repo Push  ${sign_in_user}  ${sign_in_pwd}  ${harbor_chart_filename}
-    Go Into Project  project${d}  has_image=${false}
     Switch To Project Charts
     Go Into Chart Version  ${harbor_chart_name}
     Retry Wait Until Page Contains  ${harbor_chart_version}
-    Capture Page Screenshot
 
 Helm3 CLI Push Without Sign In Harbor
     [Arguments]  ${sign_in_user}  ${sign_in_pwd}
     ${d}=   Get Current Date    result_format=%m%s
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Helm Repo Push  ${sign_in_user}  ${sign_in_pwd}  ${harbor_chart_filename}  helm_repo_name=${HARBOR_URL}/chartrepo/project${d}  helm_cmd=helm3
-    Go Into Project  project${d}  has_image=${false}
     Switch To Project Charts
     Retry Double Keywords When Error  Go Into Chart Version  ${harbor_chart_name}  Retry Wait Until Page Contains  ${harbor_chart_version}
-    Capture Page Screenshot
 
-#Important Note: All CVE IDs in CVE Whitelist cases must unique!
-Body Of Verfiy System Level CVE Whitelist
+#Important Note: All CVE IDs in CVE Allowlist cases must unique!
+Body Of Verfiy System Level CVE Allowlist
     [Arguments]  ${image_argument}  ${sha256_argument}  ${most_cve_list}  ${single_cve}
-    [Tags]  run-once
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     ${image}=    Set Variable    ${image_argument}
@@ -240,29 +247,33 @@ Body Of Verfiy System Level CVE Whitelist
     ${signin_user}=    Set Variable  user025
     ${signin_pwd}=    Set Variable  Test1@34
     Sign In Harbor    ${HARBOR_URL}    ${signin_user}    ${signin_pwd}
-    Create An New Project    project${d}
+    Create An New Project And Go Into Project    project${d}
     Push Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    sha256=${sha256}
     Go Into Project  project${d}
     Set Vulnerabilty Serverity  2
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}  err_msg=cannot be pulled due to configured policy
     Go Into Project  project${d}
     Go Into Repo  project${d}/${image}
     Scan Repo  ${sha256}  Succeed
     Logout Harbor
+
     Sign In Harbor    ${HARBOR_URL}    ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Check Listed In CVE Allowlist  project${d}  ${image}  ${sha256}  ${single_cve}  is_in=No
     Switch To Configure
     Switch To Configuration System Setting
-    # Add Items To System CVE Whitelist    CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645
-    Add Items To System CVE Whitelist    ${most_cve_list}
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
-    # Add Items To System CVE Whitelist    CVE-2019-18276
-    Add Items To System CVE Whitelist    ${single_cve}
+    # Add Items To System CVE Allowlist    CVE-2019-19317\nCVE-2019-19646 \nCVE-2019-5188 \nCVE-2019-20387 \nCVE-2019-17498 \nCVE-2019-20372 \nCVE-2019-19244 \nCVE-2019-19603 \nCVE-2019-19880 \nCVE-2019-19923 \nCVE-2019-19925 \nCVE-2019-19926 \nCVE-2019-19959 \nCVE-2019-20218 \nCVE-2019-19232 \nCVE-2019-19234 \nCVE-2019-19645
+    Add Items To System CVE Allowlist    ${most_cve_list}
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}  err_msg=cannot be pulled due to configured policy
+    # Add Items To System CVE Allowlist    CVE-2019-18276
+    Add Items To System CVE Allowlist    ${single_cve}
     Pull Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
-    Delete Top Item In System CVE Whitelist  count=6
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
+    Delete Top Item In System CVE Allowlist  count=16
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}  err_msg=cannot be pulled due to configured policy
+
+    Check Listed In CVE Allowlist  project${d}  ${image}  ${sha256}  ${single_cve}
     Close Browser
 
-Body Of Verfiy Project Level CVE Whitelist
+Body Of Verfiy Project Level CVE Allowlist
     [Arguments]  ${image_argument}  ${sha256_argument}  ${most_cve_list}  ${single_cve}
     [Tags]  run-once
     Init Chrome Driver
@@ -272,25 +283,25 @@ Body Of Verfiy Project Level CVE Whitelist
     ${signin_user}=    Set Variable  user025
     ${signin_pwd}=    Set Variable  Test1@34
     Sign In Harbor    ${HARBOR_URL}    ${signin_user}    ${signin_pwd}
-    Create An New Project    project${d}
+    Create An New Project And Go Into Project    project${d}
     Push Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    sha256=${sha256}
     Pull Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
     Go Into Project  project${d}
     Set Vulnerabilty Serverity  2
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
     Go Into Project  project${d}
     Go Into Repo  project${d}/${image}
     Scan Repo  ${sha256}  Succeed
     Go Into Project  project${d}
-    Add Items to Project CVE Whitelist    ${most_cve_list}
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
-    Add Items to Project CVE Whitelist    ${single_cve}
+    Add Items to Project CVE Allowlist    ${most_cve_list}
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
+    Add Items to Project CVE Allowlist    ${single_cve}
     Pull Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
-    Delete Top Item In Project CVE Whitelist
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
+    Delete Top Item In Project CVE Allowlist
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
     Close Browser
 
-Body Of Verfiy Project Level CVE Whitelist By Quick Way of Add System
+Body Of Verfiy Project Level CVE Allowlist By Quick Way of Add System
     [Arguments]  ${image_argument}  ${sha256_argument}  ${cve_list}
     [Tags]  run-once
     Init Chrome Driver
@@ -302,10 +313,10 @@ Body Of Verfiy Project Level CVE Whitelist By Quick Way of Add System
     Sign In Harbor    ${HARBOR_URL}    ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
     Switch To Configure
     Switch To Configuration System Setting
-    Add Items To System CVE Whitelist    ${cve_list}
+    Add Items To System CVE Allowlist    ${cve_list}
     Logout Harbor
     Sign In Harbor    ${HARBOR_URL}    ${signin_user}    ${signin_pwd}
-    Create An New Project    project${d}
+    Create An New Project And Go Into Project    project${d}
     Push Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    sha256=${sha256}
     Go Into Project  project${d}
     Set Vulnerabilty Serverity  2
@@ -314,8 +325,77 @@ Body Of Verfiy Project Level CVE Whitelist By Quick Way of Add System
     Scan Repo  ${sha256}  Succeed
     Pull Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
     Go Into Project  project${d}
-    Set Project To Project Level CVE Whitelist
-    Cannot Pull image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
-    Add System CVE Whitelist to Project CVE Whitelist By Add System Button Click
+    Set Project To Project Level CVE Allowlist
+    Cannot Pull Image  ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
+    Add System CVE Allowlist to Project CVE Allowlist By Add System Button Click
     Pull Image    ${ip}    ${signin_user}    ${signin_pwd}    project${d}    ${image}    tag=${sha256}
     Close Browser
+
+Body Of Replication Of Push Images to Registry Triggered By Event
+    [Arguments]  ${provider}  ${endpoint}  ${username}  ${pwd}  ${dest_namespace}  ${image_size}=12
+    Init Chrome Driver
+    ${d}=    Get Current Date    result_format=%m%s
+    ${sha256}=  Set Variable  0e67625224c1da47cb3270e7a861a83e332f708d3d89dde0cbed432c94824d9a
+    ${image}=  Set Variable  test_push_repli
+    ${tag1}=  Set Variable  v1.1.0
+    @{tags}   Create List  ${tag1}
+    #login source
+    Sign In Harbor    ${HARBOR_URL}    ${HARBOR_ADMIN}    ${HARBOR_PASSWORD}
+    Create An New Project And Go Into Project    project${d}
+    Switch To Registries
+    Create A New Endpoint    ${provider}    e${d}    ${endpoint}    ${username}    ${pwd}    Y
+    Switch To Replication Manage
+    Create A Rule With Existing Endpoint    rule${d}    push    project${d}/*    image    e${d}    ${dest_namespace}  mode=Event Based  del_remote=${true}
+    Push Special Image To Project  project${d}  ${ip}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  ${image}  tags=@{tags}  size=${image_size}
+    Filter Replication Rule  rule${d}
+    Select Rule  rule${d}
+    ${endpoint_body}=  Fetch From Right  ${endpoint}  //
+    ${dest_namespace}=  Set Variable If  '${provider}'=='gitlab'  ${endpoint_body}/${dest_namespace}  ${dest_namespace}
+    Run Keyword If  '${provider}'=='docker-hub' or '${provider}'=='gitlab'  Docker Image Can Be Pulled  ${dest_namespace}/${image}:${tag1}   times=3
+    Executions Result Count Should Be  Succeeded  event_based  1
+    Go Into Project  project${d}
+    Delete Repo  project${d}  ${image}
+    Run Keyword If  '${provider}'=='docker-hub' or '${provider}'=='gitlab'  Docker Image Can Not Be Pulled  ${dest_namespace}/${image}:${tag1}
+    Switch To Replication Manage
+    Filter Replication Rule  rule${d}
+    Select Rule  rule${d}
+    Executions Result Count Should Be  Succeeded  event_based  2
+
+Body Of Replication Of Pull Images from Registry To Self
+    [Arguments]  ${provider}  ${endpoint}  ${username}  ${pwd}  ${src_project_name}  ${des_project_name}  ${verify_verbose}  @{target_images}
+    Init Chrome Driver
+    ${d}=    Get Current Date    result_format=%m%s
+    ${_des_pro_name}=  Set Variable If  '${des_project_name}'=='${null}'  project${d}  ${des_project_name}
+    #login source
+    Sign In Harbor    ${HARBOR_URL}    ${HARBOR_ADMIN}    ${HARBOR_PASSWORD}
+    Run Keyword If  '${des_project_name}'=='${null}'  Create An New Project And Go Into Project  ${_des_pro_name}
+    Switch To Registries
+    Create A New Endpoint    ${provider}    e${d}    ${endpoint}    ${username}    ${pwd}    Y
+    Switch To Replication Manage
+    Create A Rule With Existing Endpoint  rule${d}  pull  ${src_project_name}  all  e${d}  ${_des_pro_name}
+    Select Rule And Replicate  rule${d}
+    Run Keyword If  '${verify_verbose}'=='Y'  Verify Artifact Display Verbose  ${_des_pro_name}  @{target_images}
+    ...  ELSE  Verify Artifact Display  ${_des_pro_name}  @{target_images}
+    Close Browser
+
+Verify Artifact Display Verbose
+    [Arguments]  ${pro_name}  @{target_images}
+    FOR    ${item}    IN    @{target_images}
+        ${item}=  Get Substring  ${item}  1  -1
+        ${item}=  Evaluate  ${item}
+        ${image}=  Get From Dictionary  ${item}  image
+        ${tag}=  Get From Dictionary  ${item}  tag
+        ${total_artifact_count}=  Get From Dictionary  ${item}  total_artifact_count
+        ${archive_count}=  Get From Dictionary  ${item}  archive_count
+        Log To Console  Check image ${image}:${tag} replication to Project ${pro_name}
+        Image Should Be Replicated To Project  ${pro_name}  ${image}  tag=${tag}  total_artifact_count=${total_artifact_count}  archive_count=${archive_count}  times=2
+    END
+
+Verify Artifact Display
+    [Arguments]  ${pro_name}  @{target_images}
+    FOR    ${item}    IN    @{target_images}
+        ${item}=  Get Substring  ${item}  1  -1
+        ${item}=  Evaluate  ${item}
+        ${image}=  Get From Dictionary  ${item}  image
+        Image Should Be Replicated To Project  ${pro_name}  ${image}  times=2
+    END

@@ -1,8 +1,8 @@
-import shutil, os
-
+import os
+import shutil
 from g import config_dir, templates_dir, data_dir, DEFAULT_GID, DEFAULT_UID
-from utils.misc import prepare_dir, generate_random_string
 from utils.jinja import render_jinja
+from utils.misc import prepare_dir, generate_random_string
 
 core_config_dir = os.path.join(config_dir, "core", "certificates")
 core_env_template_path = os.path.join(templates_dir, "core", "env.jinja")
@@ -13,13 +13,13 @@ core_conf = os.path.join(config_dir, "core", "app.conf")
 ca_download_dir = os.path.join(data_dir, 'ca_download')
 
 
-def prepare_core(config_dict, with_notary, with_clair, with_trivy, with_chartmuseum):
+def prepare_core(config_dict, with_notary, with_trivy, with_chartmuseum):
     prepare_dir(ca_download_dir, uid=DEFAULT_UID, gid=DEFAULT_GID)
     prepare_dir(core_config_dir)
     # Render Core
     # set cache for chart repo server
     # default set 'memory' mode, if redis is configured then set to 'redis'
-    if len(config_dict['redis_host']) > 0:
+    if len(config_dict['redis_url_core']) > 0:
         chart_cache_driver = "redis"
     else:
         chart_cache_driver = "memory"
@@ -29,7 +29,6 @@ def prepare_core(config_dict, with_notary, with_clair, with_trivy, with_chartmus
         core_conf_env,
         chart_cache_driver=chart_cache_driver,
         with_notary=with_notary,
-        with_clair=with_clair,
         with_trivy=with_trivy,
         with_chartmuseum=with_chartmuseum,
         csrf_key=generate_random_string(32),
@@ -39,7 +38,8 @@ def prepare_core(config_dict, with_notary, with_clair, with_trivy, with_chartmus
         core_conf_template_path,
         core_conf,
         uid=DEFAULT_UID,
-        gid=DEFAULT_GID)
+        gid=DEFAULT_GID,
+        **config_dict)
 
 
 def copy_core_config(core_templates_path, core_config_path):

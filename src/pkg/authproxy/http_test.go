@@ -1,14 +1,16 @@
 package authproxy
 
 import (
+	"os"
+	"testing"
+
 	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/dao/group"
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/lib/config/models"
+	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/pkg/usergroup"
 	"github.com/stretchr/testify/assert"
 	"k8s.io/api/authentication/v1beta1"
 	"k8s.io/client-go/rest"
-	"os"
-	"testing"
 )
 
 func TestMain(m *testing.M) {
@@ -21,19 +23,24 @@ func TestMain(m *testing.M) {
 
 func TestUserFromReviewStatus(t *testing.T) {
 	type result struct {
-		hasErr   bool
-		username string
-		groupLen int
+		hasErr      bool
+		username    string
+		groupLen    int
+		adminInAuth bool
 	}
 	cases := []struct {
-		input  v1beta1.TokenReviewStatus
-		expect result
+		input          v1beta1.TokenReviewStatus
+		adminGroups    []string
+		adminUsernames []string
+		expect         result
 	}{
 		{
 			input: v1beta1.TokenReviewStatus{
 				Authenticated: false,
 				Error:         "connection error",
 			},
+			adminGroups:    []string{"admin"},
+			adminUsernames: []string{},
 			expect: result{
 				hasErr: true,
 			},
@@ -46,10 +53,13 @@ func TestUserFromReviewStatus(t *testing.T) {
 					UID:      "u-1",
 				},
 			},
+			adminGroups:    []string{"admin"},
+			adminUsernames: []string{},
 			expect: result{
-				hasErr:   false,
-				username: "jack",
-				groupLen: 0,
+				hasErr:      false,
+				username:    "jack",
+				groupLen:    0,
+				adminInAuth: false,
 			},
 		},
 		{
@@ -61,26 +71,48 @@ func TestUserFromReviewStatus(t *testing.T) {
 				},
 				Error: "",
 			},
+			adminGroups:    []string{"group2", "admin"},
+			adminUsernames: []string{},
 			expect: result{
-				hasErr:   false,
-				username: "daniel",
-				groupLen: 2,
+				hasErr:      false,
+				username:    "daniel",
+				groupLen:    2,
+				adminInAuth: true,
+			},
+		},
+		{
+			input: v1beta1.TokenReviewStatus{
+				Authenticated: true,
+				User: v1beta1.UserInfo{
+					Username: "daniel",
+					Groups:   []string{"group1", "group2"},
+				},
+				Error: "",
+			},
+			adminGroups:    []string{},
+			adminUsernames: []string{"daniel", "admin"},
+			expect: result{
+				hasErr:      false,
+				username:    "daniel",
+				groupLen:    2,
+				adminInAuth: true,
 			},
 		},
 	}
 	for _, c := range cases {
-		u, err := UserFromReviewStatus(c.input)
+		u, err := UserFromReviewStatus(c.input, c.adminGroups, c.adminUsernames)
 		if c.expect.hasErr == true {
 			assert.NotNil(t, err)
 		} else {
 			assert.Nil(t, err)
 			assert.Equal(t, c.expect.username, u.Username)
 			assert.Equal(t, c.expect.groupLen, len(u.GroupIDs))
+			assert.Equal(t, c.expect.adminInAuth, u.AdminRoleInAuth)
 		}
 		if u != nil {
 			for _, gid := range u.GroupIDs {
 				t.Logf("Deleting group %d", gid)
-				if err := group.DeleteUserGroup(gid); err != nil {
+				if err := usergroup.Mgr.Delete(orm.Context(), gid); err != nil {
 					panic(err)
 				}
 			}

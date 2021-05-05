@@ -18,6 +18,7 @@ import (
 	"github.com/docker/distribution"
 	"github.com/stretchr/testify/mock"
 	"io"
+	"net/http"
 )
 
 // FakeClient is a fake registry client that implement src/pkg/registry.Client interface
@@ -52,9 +53,13 @@ func (f *FakeClient) ListTags(repository string) ([]string, error) {
 }
 
 // ManifestExist ...
-func (f *FakeClient) ManifestExist(repository, reference string) (bool, string, error) {
+func (f *FakeClient) ManifestExist(repository, reference string) (bool, *distribution.Descriptor, error) {
 	args := f.Called()
-	return args.Bool(0), args.String(1), args.Error(2)
+	var desc *distribution.Descriptor
+	if args[0] != nil {
+		desc = args[0].(*distribution.Descriptor)
+	}
+	return args.Bool(0), desc, args.Error(2)
 }
 
 // PullManifest ...
@@ -117,4 +122,13 @@ func (f *FakeClient) DeleteBlob(repository, digest string) (err error) {
 func (f *FakeClient) Copy(srcRepo, srcRef, dstRepo, dstRef string, override bool) error {
 	args := f.Called()
 	return args.Error(0)
+}
+
+func (f *FakeClient) Do(req *http.Request) (*http.Response, error) {
+	args := f.Called()
+	var resp *http.Response
+	if args[0] != nil {
+		resp = args[0].(*http.Response)
+	}
+	return resp, args.Error(1)
 }

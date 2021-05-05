@@ -7,6 +7,7 @@ import (
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/pkg/label/model"
 )
 
 const (
@@ -35,13 +36,9 @@ func (cla *ChartLabelAPI) Prepare() {
 	project := cla.GetStringFromPath(namespaceParam)
 
 	// Project should be a valid existing one
-	existingProject, err := cla.ProjectMgr.Get(project)
+	existingProject, err := cla.ProjectCtl.Get(cla.Context(), project)
 	if err != nil {
-		cla.SendInternalServerError(err)
-		return
-	}
-	if existingProject == nil {
-		cla.SendNotFoundError(fmt.Errorf("project '%s' not found", project))
+		cla.SendError(err)
 		return
 	}
 	cla.project = existingProject
@@ -67,7 +64,7 @@ func (cla *ChartLabelAPI) MarkLabel() {
 		return
 	}
 
-	l := &models.Label{}
+	l := &model.Label{}
 	if err := cla.DecodeJSONReq(l); err != nil {
 		cla.SendBadRequestError(err)
 		return

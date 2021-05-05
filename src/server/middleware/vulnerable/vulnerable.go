@@ -59,7 +59,7 @@ func Middleware() func(http.Handler) http.Handler {
 			return err
 		}
 
-		proj, err := projectController.Get(ctx, art.ProjectID, project.CVEWhitelist(true))
+		proj, err := projectController.Get(ctx, art.ProjectID, project.WithEffectCVEAllowlist())
 		if err != nil {
 			logger.Errorf("get the project %d failed, error: %v", art.ProjectID, err)
 			return err
@@ -91,8 +91,8 @@ func Middleware() func(http.Handler) http.Handler {
 			return nil
 		}
 
-		whitelist := report.CVESet(proj.CVEWhitelist.CVESet())
-		summaries, err := scanController.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport}, report.WithCVEWhitelist(&whitelist))
+		allowlist := proj.CVEAllowlist.CVESet()
+		summaries, err := scanController.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport}, report.WithCVEAllowlist(&allowlist))
 		if err != nil {
 			logger.Errorf("get vulnerability summary of the artifact %s@%s failed, error: %v", art.RepositoryName, art.Digest, err)
 			return err
@@ -102,10 +102,13 @@ func Middleware() func(http.Handler) http.Handler {
 
 		rawSummary, ok := summaries[v1.MimeTypeNativeReport]
 		if !ok {
-			// No report yet?
-			msg := fmt.Sprintf(`current image without vulnerability scanning cannot be pulled due to configured policy in 'Prevent images with vulnerability severity of "%s" or higher from running.' `+
-				`To continue with pull, please contact your project administrator for help.`, projectSeverity)
-			return errors.New(nil).WithCode(errors.PROJECTPOLICYVIOLATION).WithMessage(msg)
+			rawSummary, ok = summaries[v1.MimeTypeGenericVulnerabilityReport]
+			if !ok {
+				// No report yet?
+				msg := fmt.Sprintf(`current image without vulnerability scanning cannot be pulled due to configured policy in 'Prevent images with vulnerability severity of "%s" or higher from running.' `+
+					`To continue with pull, please contact your project administrator for help.`, projectSeverity)
+				return errors.New(nil).WithCode(errors.PROJECTPOLICYVIOLATION).WithMessage(msg)
+			}
 		}
 
 		summary, ok := rawSummary.(*vuln.NativeReportSummary)
@@ -114,11 +117,11 @@ func Middleware() func(http.Handler) http.Handler {
 		}
 
 		if art.IsImageIndex() {
-			// artifact is image index, skip the checking when it is in the whitelist
-			skippingWhitelist := []string{image.ArtifactTypeImage, cnab.ArtifactTypeCNAB}
-			for _, t := range skippingWhitelist {
+			// artifact is image index, skip the checking when it is in the allowlist
+			skippingAllowlist := []string{image.ArtifactTypeImage, cnab.ArtifactTypeCNAB}
+			for _, t := range skippingAllowlist {
 				if art.Type == t {
-					logger.Debugf("artifact %s@%s is image index and its type is %s in skipping whitelist, "+
+					logger.Debugf("artifact %s@%s is image index and its type is %s in skipping allowlist, "+
 						"skip the vulnerability prevention checking", art.RepositoryName, art.Digest, art.Type)
 					return nil
 				}
@@ -145,7 +148,7 @@ func Middleware() func(http.Handler) http.Handler {
 				thing = "vulnerabilities"
 			}
 			msg := fmt.Sprintf(`current image with %d %s cannot be pulled due to configured policy in 'Prevent images with vulnerability severity of "%s" or higher from running.' `+
-				`To continue with pull, please contact your project administrator to exempt matched vulnerabilities through configuring the CVE whitelist.`,
+				`To continue with pull, please contact your project administrator to exempt matched vulnerabilities through configuring the CVE allowlist.`,
 				summary.Summary.Total, thing, projectSeverity)
 			return errors.New(nil).WithCode(errors.PROJECTPOLICYVIOLATION).WithMessage(msg)
 		}

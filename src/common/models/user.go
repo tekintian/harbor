@@ -24,7 +24,7 @@ const UserTable = "harbor_user"
 // User holds the details of a user.
 type User struct {
 	UserID          int    `orm:"pk;auto;column(user_id)" json:"user_id"`
-	Username        string `orm:"column(username)" json:"username"`
+	Username        string `orm:"column(username)" json:"username" sort:"default"`
 	Email           string `orm:"column(email)" json:"email"`
 	Password        string `orm:"column(password)" json:"password"`
 	PasswordVersion string `orm:"column(password_version)" json:"password_version"`
@@ -44,14 +44,6 @@ type User struct {
 	UpdateTime      time.Time `orm:"column(update_time);auto_now" json:"update_time"`
 	GroupIDs        []int     `orm:"-" json:"-"`
 	OIDCUserMeta    *OIDCUser `orm:"-" json:"oidc_user_meta,omitempty"`
-}
-
-// UserQuery ...
-type UserQuery struct {
-	UserIDs    []int
-	Username   string
-	Email      string
-	Pagination *Pagination
 }
 
 // TableName ...

@@ -2,7 +2,9 @@ package csrf
 
 import (
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/core/config"
+	"github.com/goharbor/harbor/src/common/utils/test"
+	"github.com/goharbor/harbor/src/lib/config"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	test.InitDatabaseFromEnv()
 	conf := map[string]interface{}{}
 	config.InitWithSettings(conf)
 	result := m.Run()
@@ -58,7 +61,7 @@ func TestMiddleware(t *testing.T) {
 		rec := httptest.NewRecorder()
 		srv.ServeHTTP(rec, c.req)
 		assert.Equal(t, c.statusCode, rec.Result().StatusCode)
-		assert.Equal(t, c.returnToken, hasCookie(rec.Result(), tokenCookie))
+		assert.Equal(t, c.returnToken, rec.Result().Header.Get(tokenHeader) != "")
 	}
 }
 

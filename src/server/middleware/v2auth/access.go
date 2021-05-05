@@ -8,7 +8,6 @@ import (
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/server/middleware"
 )
 
 type target int
@@ -72,7 +71,7 @@ func accessList(req *http.Request) []access {
 		})
 		return l
 	}
-	if len(middleware.V2CatalogURLRe.FindStringSubmatch(req.URL.Path)) == 1 {
+	if lib.V2CatalogURLRe.MatchString(req.URL.Path) {
 		l = append(l, access{
 			target: catalog,
 		})

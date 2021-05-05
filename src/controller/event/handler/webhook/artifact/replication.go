@@ -1,30 +1,40 @@
 package artifact
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/goharbor/harbor/src/lib/config"
+
 	commonModels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/event/handler/util"
-	"github.com/goharbor/harbor/src/core/config"
+	ctlModel "github.com/goharbor/harbor/src/controller/event/model"
+	"github.com/goharbor/harbor/src/controller/project"
+	"github.com/goharbor/harbor/src/controller/replication"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/notification"
 	"github.com/goharbor/harbor/src/pkg/notifier/model"
-	notifyModel "github.com/goharbor/harbor/src/pkg/notifier/model"
-	"github.com/goharbor/harbor/src/replication"
-	rpModel "github.com/goharbor/harbor/src/replication/model"
+	"github.com/goharbor/harbor/src/pkg/reg"
+	rpModel "github.com/goharbor/harbor/src/pkg/reg/model"
 )
 
 // ReplicationHandler preprocess replication event data
 type ReplicationHandler struct {
 }
 
+// Name ...
+func (r *ReplicationHandler) Name() string {
+	return "ReplicationWebhook"
+}
+
 // Handle ...
-func (r *ReplicationHandler) Handle(value interface{}) error {
-	if !config.NotificationEnable() {
+func (r *ReplicationHandler) Handle(ctx context.Context, value interface{}) error {
+	if !config.NotificationEnable(ctx) {
 		log.Debug("notification feature is not enabled")
 		return nil
 	}
@@ -42,7 +52,7 @@ func (r *ReplicationHandler) Handle(value interface{}) error {
 		return err
 	}
 
-	policies, err := notification.PolicyMgr.GetRelatedPolices(project.ProjectID, rpEvent.EventType)
+	policies, err := notification.PolicyMgr.GetRelatedPolices(orm.Context(), project.ProjectID, rpEvent.EventType)
 	if err != nil {
 		log.Errorf("failed to find policy for %s event: %v", rpEvent.EventType, err)
 		return err
@@ -64,25 +74,20 @@ func (r *ReplicationHandler) IsStateful() bool {
 }
 
 func constructReplicationPayload(event *event.ReplicationEvent) (*model.Payload, *commonModels.Project, error) {
-	task, err := replication.OperationCtl.GetTask(event.ReplicationTaskID)
+	ctx := orm.Context()
+	task, err := replication.Ctl.GetTask(ctx, event.ReplicationTaskID)
 	if err != nil {
 		log.Errorf("failed to get replication task %d: error: %v", event.ReplicationTaskID, err)
 		return nil, nil, err
 	}
-	if task == nil {
-		return nil, nil, fmt.Errorf("task %d not found with replication event", event.ReplicationTaskID)
-	}
 
-	execution, err := replication.OperationCtl.GetExecution(task.ExecutionID)
+	execution, err := replication.Ctl.GetExecution(ctx, task.ExecutionID)
 	if err != nil {
 		log.Errorf("failed to get replication execution %d: error: %v", task.ExecutionID, err)
 		return nil, nil, err
 	}
-	if execution == nil {
-		return nil, nil, fmt.Errorf("execution %d not found with replication event", task.ExecutionID)
-	}
 
-	rpPolicy, err := replication.PolicyCtl.Get(execution.PolicyID)
+	rpPolicy, err := replication.Ctl.GetPolicy(ctx, execution.PolicyID)
 	if err != nil {
 		log.Errorf("failed to get replication policy %d: error: %v", execution.PolicyID, err)
 		return nil, nil, err
@@ -100,17 +105,14 @@ func constructReplicationPayload(event *event.ReplicationEvent) (*model.Payload,
 		remoteRegID = rpPolicy.DestRegistry.ID
 	}
 
-	remoteRegistry, err := replication.RegistryMgr.Get(remoteRegID)
+	remoteRegistry, err := reg.Mgr.Get(ctx, remoteRegID)
 	if err != nil {
 		log.Errorf("failed to get replication remoteRegistry registry %d: error: %v", remoteRegID, err)
 		return nil, nil, err
 	}
-	if remoteRegistry == nil {
-		return nil, nil, fmt.Errorf("registry %d not found with replication event", remoteRegID)
-	}
 
-	srcNamespace, srcNameAndTag := getMetadataFromResource(task.SrcResource)
-	destNamespace, destNameAndTag := getMetadataFromResource(task.DstResource)
+	srcNamespace, srcNameAndTag := getMetadataFromResource(task.SourceResource)
+	destNamespace, destNameAndTag := getMetadataFromResource(task.DestinationResource)
 
 	extURL, err := config.ExtURL()
 	if err != nil {
@@ -118,7 +120,7 @@ func constructReplicationPayload(event *event.ReplicationEvent) (*model.Payload,
 	}
 	hostname := strings.Split(extURL, ":")[0]
 
-	remoteRes := &model.ReplicationResource{
+	remoteRes := &ctlModel.ReplicationResource{
 		RegistryName: remoteRegistry.Name,
 		RegistryType: string(remoteRegistry.Type),
 		Endpoint:     remoteRegistry.URL,
@@ -129,18 +131,18 @@ func constructReplicationPayload(event *event.ReplicationEvent) (*model.Payload,
 	if err != nil {
 		log.Errorf("Error while reading external endpoint: %v", err)
 	}
-	localRes := &model.ReplicationResource{
+	localRes := &ctlModel.ReplicationResource{
 		RegistryType: string(rpModel.RegistryTypeHarbor),
 		Endpoint:     ext,
 		Namespace:    destNamespace,
 	}
 
-	payload := &notifyModel.Payload{
+	payload := &model.Payload{
 		Type:     event.EventType,
 		OccurAt:  event.OccurAt.Unix(),
 		Operator: string(execution.Trigger),
 		EventData: &model.EventData{
-			Replication: &model.Replication{
+			Replication: &ctlModel.Replication{
 				HarborHostname:     hostname,
 				JobStatus:          event.Status,
 				Description:        rpPolicy.Description,
@@ -172,32 +174,29 @@ func constructReplicationPayload(event *event.ReplicationEvent) (*model.Payload,
 	}
 
 	if event.Status == string(job.SuccessStatus) {
-		succeedArtifact := &model.ArtifactInfo{
+		succeedArtifact := &ctlModel.ArtifactInfo{
 			Type:       task.ResourceType,
 			Status:     task.Status,
 			NameAndTag: nameAndTag,
 		}
-		payload.EventData.Replication.SuccessfulArtifact = []*model.ArtifactInfo{succeedArtifact}
+		payload.EventData.Replication.SuccessfulArtifact = []*ctlModel.ArtifactInfo{succeedArtifact}
 	}
 	if event.Status == string(job.ErrorStatus) {
-		failedArtifact := &model.ArtifactInfo{
+		failedArtifact := &ctlModel.ArtifactInfo{
 			Type:       task.ResourceType,
 			Status:     task.Status,
 			NameAndTag: nameAndTag,
 		}
-		payload.EventData.Replication.FailedArtifact = []*model.ArtifactInfo{failedArtifact}
+		payload.EventData.Replication.FailedArtifact = []*ctlModel.ArtifactInfo{failedArtifact}
 	}
 
-	project, err := config.GlobalProjectMgr.Get(prjName)
+	prj, err := project.Ctl.GetByName(orm.Context(), prjName, project.Metadata(true))
 	if err != nil {
 		log.Errorf("failed to get project %s, error: %v", prjName, err)
 		return nil, nil, err
 	}
-	if project == nil {
-		return nil, nil, fmt.Errorf("project %s not found of replication event", prjName)
-	}
 
-	return payload, project, nil
+	return payload, prj, nil
 }
 
 func getMetadataFromResource(resource string) (namespace, nameAndTag string) {

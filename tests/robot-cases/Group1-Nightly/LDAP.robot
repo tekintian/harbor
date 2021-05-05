@@ -47,8 +47,7 @@ Test Case - System Admin On-board New Member
     Sleep  2
     Page Should Not Contain  mike02
     Navigate To Projects
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
+    Create An New Project And Go Into Project  project${d}
     Switch To Member
     Add Guest Member To Project  mike02
     Page Should Contain  mike02
@@ -58,8 +57,7 @@ Test Case - LDAP User On-borad New Member
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  mike03  zhu88jie
-    Create An New Project  project${d}
-    Go Into Project  project${d}  has_image=${false}
+    Create An New Project And Go Into Project  project${d}
     Switch To Member
     Sleep  2
     Page Should Not Contain  mike04
@@ -94,7 +92,7 @@ Test Case - Ldap User Create Project
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  mike  zhu88jie
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
     Logout Harbor
     Manage Project Member  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}  project${d}  mike02  Add  has_image=${false}
     Close Browser
@@ -103,7 +101,7 @@ Test Case - Ldap User Push An Image
     Init Chrome Driver
     ${d}=    Get Current Date    result_format=%m%s
     Sign In Harbor  ${HARBOR_URL}  mike  zhu88jie
-    Create An New Project  project${d}
+    Create An New Project And Go Into Project  project${d}
 
     Push Image  ${ip}  mike  zhu88jie  project${d}  hello-world:latest
     Go Into Project  project${d}
@@ -112,6 +110,17 @@ Test Case - Ldap User Push An Image
 
 Test Case - Ldap User Can Not login
     Docker Login Fail  ${ip}  testerDeesExist  123456
+
+Test Case - Ldap Group Admin DN Setting
+    Init Chrome Driver
+    ${d}=    Get Current Date    result_format=%m%s
+    Sign In Harbor  ${HARBOR_URL}  ${HARBOR_ADMIN}  ${HARBOR_PASSWORD}
+    Set LDAP Group Admin DN  cn=harbor_users,ou=groups,dc=example,dc=com
+    Logout Harbor
+    Sign In Harbor  ${HARBOR_URL}  mike  zhu88jie
+    Switch To Registries
+    Create A New Endpoint    harbor    edp1${d}    https://cicd.harbor.vmwarecna.net    ${null}    ${null}    Y
+
 
 Test Case - Run LDAP Group Related API Test
     Harbor API Test  ./tests/apitests/python/test_ldap_admin_role.py

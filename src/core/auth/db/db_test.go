@@ -14,6 +14,9 @@
 package db
 
 import (
+	"github.com/goharbor/harbor/src/lib/config"
+	_ "github.com/goharbor/harbor/src/pkg/config/db"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"log"
 	"os"
 	"testing"
@@ -23,10 +26,7 @@ import (
 	"github.com/goharbor/harbor/src/common/utils/test"
 
 	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/common/utils/ldap"
 	"github.com/goharbor/harbor/src/core/auth"
-	"github.com/goharbor/harbor/src/core/config"
-	coreConfig "github.com/goharbor/harbor/src/core/config"
 )
 
 var testConfig = map[string]interface{}{
@@ -63,7 +63,7 @@ func TestMain(m *testing.M) {
 		log.Fatalf("failed to set env %s: %v", "KEY_PATH", err)
 	}
 
-	coreConfig.Init()
+	config.Init()
 
 	config.Upload(testConfig)
 	retCode := m.Run()
@@ -117,24 +117,5 @@ func TestAuthenticateHelperSearchUser(t *testing.T) {
 
 	if user == nil {
 		t.Error("Failed to search user admin")
-	}
-}
-
-func TestLdapConnectionTest(t *testing.T) {
-	var ldapConfig = models.LdapConf{
-		LdapURL:               "ldap://127.0.0.1",
-		LdapSearchDn:          "cn=admin,dc=example,dc=com",
-		LdapSearchPassword:    "admin",
-		LdapBaseDn:            "dc=example,dc=com",
-		LdapFilter:            "",
-		LdapUID:               "cn",
-		LdapScope:             3,
-		LdapConnectionTimeout: 10,
-		LdapVerifyCert:        false,
-	}
-	// Test ldap connection under auth_mod is db_auth
-	err := ldap.ConnectionTestWithConfig(ldapConfig)
-	if err != nil {
-		t.Fatalf("Failed to test ldap server! error %v", err)
 	}
 }

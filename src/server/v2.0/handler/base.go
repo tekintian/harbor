@@ -18,11 +18,18 @@ package handler
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib"
-	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/goharbor/harbor/src/lib/q"
+	"net/http"
 	"net/url"
 	"strconv"
+
+	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
+	"github.com/goharbor/harbor/src/common/rbac/system"
+
+	"github.com/go-openapi/runtime"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/errors"
+	lib_http "github.com/goharbor/harbor/src/lib/http"
+	"github.com/goharbor/harbor/src/lib/q"
 
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/goharbor/harbor/src/common/rbac"
@@ -30,7 +37,10 @@ import (
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib/log"
-	errs "github.com/goharbor/harbor/src/server/error"
+)
+
+var (
+	baseProjectCtl = project.Ctl
 )
 
 // BaseAPI base API handler
@@ -43,18 +53,26 @@ func (*BaseAPI) Prepare(ctx context.Context, operation string, params interface{
 
 // SendError returns response for the err
 func (*BaseAPI) SendError(ctx context.Context, err error) middleware.Responder {
-	return errs.NewErrResponder(err)
+	return NewErrResponder(err)
+}
+
+// GetSecurityContext from the provided context
+func (*BaseAPI) GetSecurityContext(ctx context.Context) (security.Context, error) {
+	sc, ok := security.FromContext(ctx)
+	if !ok {
+		return nil, errors.UnauthorizedError(errors.New("security context not found"))
+	}
+	return sc, nil
 }
 
 // HasPermission returns true when the request has action permission on resource
-func (*BaseAPI) HasPermission(ctx context.Context, action rbac.Action, resource rbac.Resource) bool {
-	s, ok := security.FromContext(ctx)
-	if !ok {
-		log.Warningf("security not found in the context")
+func (b *BaseAPI) HasPermission(ctx context.Context, action rbac.Action, resource rbac.Resource) bool {
+	s, err := b.GetSecurityContext(ctx)
+	if err != nil {
+		log.Warningf("security context not found")
 		return false
 	}
-
-	return s.Can(action, resource)
+	return s.Can(ctx, action, resource)
 }
 
 // HasProjectPermission returns true when the request has action permission on project subresource
@@ -65,7 +83,7 @@ func (b *BaseAPI) HasProjectPermission(ctx context.Context, projectIDOrName inte
 	}
 
 	if projectName != "" {
-		p, err := project.Ctl.GetByName(ctx, projectName)
+		p, err := baseProjectCtl.GetByName(ctx, projectName)
 		if err != nil {
 			log.Errorf("failed to get project %s: %v", projectName, err)
 			return false
@@ -78,7 +96,7 @@ func (b *BaseAPI) HasProjectPermission(ctx context.Context, projectIDOrName inte
 		projectID = p.ProjectID
 	}
 
-	resource := rbac.NewProjectNamespace(projectID).Resource(subresource...)
+	resource := rbac_project.NewNamespace(projectID).Resource(subresource...)
 	return b.HasPermission(ctx, action, resource)
 }
 
@@ -88,9 +106,9 @@ func (b *BaseAPI) RequireProjectAccess(ctx context.Context, projectIDOrName inte
 	if b.HasProjectPermission(ctx, projectIDOrName, action, subresource...) {
 		return nil
 	}
-	secCtx, ok := security.FromContext(ctx)
-	if !ok {
-		return errors.UnauthorizedError(errors.New("security context not found"))
+	secCtx, err := b.GetSecurityContext(ctx)
+	if err != nil {
+		return err
 	}
 	if !secCtx.IsAuthenticated() {
 		return errors.UnauthorizedError(nil)
@@ -98,30 +116,56 @@ func (b *BaseAPI) RequireProjectAccess(ctx context.Context, projectIDOrName inte
 	return errors.ForbiddenError(nil)
 }
 
-// RequireSysAdmin checks the system admin permission according to the security context
-func (b *BaseAPI) RequireSysAdmin(ctx context.Context) error {
-	secCtx, ok := security.FromContext(ctx)
-	if !ok {
-		return errors.UnauthorizedError(errors.New("security context not found"))
+// RequireSystemAccess checks the system admin permission according to the security context
+func (b *BaseAPI) RequireSystemAccess(ctx context.Context, action rbac.Action, subresource ...rbac.Resource) error {
+	secCtx, err := b.GetSecurityContext(ctx)
+	if err != nil {
+		return err
 	}
 	if !secCtx.IsAuthenticated() {
 		return errors.UnauthorizedError(nil)
 	}
-	if !secCtx.IsSysAdmin() {
+	resource := system.NewNamespace().Resource(subresource...)
+	if !secCtx.Can(ctx, action, resource) {
 		return errors.ForbiddenError(nil).WithMessage(secCtx.GetUsername())
 	}
 	return nil
 }
 
+// RequireAuthenticated checks it's authenticated according to the security context
+func (b *BaseAPI) RequireAuthenticated(ctx context.Context) error {
+	secCtx, err := b.GetSecurityContext(ctx)
+	if err != nil {
+		return err
+	}
+	if !secCtx.IsAuthenticated() {
+		return errors.UnauthorizedError(nil)
+	}
+	return nil
+}
+
+// RequireSolutionUserAccess check if current user is internal service
+func (b *BaseAPI) RequireSolutionUserAccess(ctx context.Context) error {
+	sec, exist := security.FromContext(ctx)
+	if !exist || !sec.IsSolutionUser() {
+		return errors.UnauthorizedError(nil).WithMessage("only internal service is allowed to call this API")
+	}
+	return nil
+}
+
 // BuildQuery builds the query model according to the query string
-func (b *BaseAPI) BuildQuery(ctx context.Context, query *string, pageNumber, pageSize *int64) (*q.Query, error) {
+func (b *BaseAPI) BuildQuery(ctx context.Context, query, sort *string, pageNumber, pageSize *int64) (*q.Query, error) {
 	var (
 		qs string
+		st string
 		pn int64
 		ps int64
 	)
 	if query != nil {
 		qs = *query
+	}
+	if sort != nil {
+		st = *sort
 	}
 	if pageNumber != nil {
 		pn = *pageNumber
@@ -129,7 +173,7 @@ func (b *BaseAPI) BuildQuery(ctx context.Context, query *string, pageNumber, pag
 	if pageSize != nil {
 		ps = *pageSize
 	}
-	return q.Build(qs, pn, ps)
+	return q.Build(qs, st, pn, ps)
 }
 
 // Links return Links based on the provided pagination information
@@ -178,4 +222,21 @@ func (b *BaseAPI) Links(ctx context.Context, u *url.URL, total, pageNumber, page
 		links = append(links, link)
 	}
 	return links
+}
+
+var _ middleware.Responder = &ErrResponder{}
+
+// ErrResponder error responder
+type ErrResponder struct {
+	err error
+}
+
+// WriteResponse ...
+func (r *ErrResponder) WriteResponse(rw http.ResponseWriter, producer runtime.Producer) {
+	lib_http.SendError(rw, r.err)
+}
+
+// NewErrResponder returns responder for err
+func NewErrResponder(err error) *ErrResponder {
+	return &ErrResponder{err: err}
 }

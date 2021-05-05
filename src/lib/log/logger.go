@@ -141,6 +141,11 @@ func (l *Logger) WithFields(fields Fields) *Logger {
 	return r
 }
 
+// WithField returns cloned logger which fields merged with field key=value
+func (l *Logger) WithField(key string, value interface{}) *Logger {
+	return l.WithFields(Fields{key: value})
+}
+
 // setOutput sets the output of Logger l
 func (l *Logger) setOutput(out io.Writer) {
 	l.mu.Lock()
@@ -261,6 +266,11 @@ func (l *Logger) Fatalf(format string, v ...interface{}) {
 	os.Exit(1)
 }
 
+// GetLevel returns the verbosity level of this logger
+func (l *Logger) GetLevel() Level {
+	return l.lvl
+}
+
 func (l *Logger) getLine() string {
 	var str string
 	if !l.skipLine {
@@ -324,6 +334,11 @@ func Fatal(v ...interface{}) {
 // Fatalf ...
 func Fatalf(format string, v ...interface{}) {
 	logger.WithDepth(4).Fatalf(format, v...)
+}
+
+// GetLevel return the verbosity level of default logger
+func GetLevel() Level {
+	return logger.GetLevel()
 }
 
 func line(callDepth int) string {

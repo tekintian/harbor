@@ -55,12 +55,7 @@ var defaultConfig = map[string]interface{}{
 	common.TokenExpiration:            30,
 	common.AdminInitialPassword:       "password",
 	common.WithNotary:                 false,
-	common.WithClair:                  false,
-	common.ClairDBUsername:            "postgres",
-	common.ClairDBHost:                "postgresql",
-	common.ClairDB:                    "postgres",
-	common.ClairDBPort:                5432,
-	common.ClairDBPassword:            "root123",
+	common.WithTrivy:                  false,
 	common.UAAClientID:                "testid",
 	common.UAAClientSecret:            "testsecret",
 	common.UAAEndpoint:                "10.192.168.5",
@@ -69,6 +64,7 @@ var defaultConfig = map[string]interface{}{
 	common.JobServiceURL:              "http://myjob:8888/",
 	common.ReadOnly:                   false,
 	common.NotaryURL:                  "http://notary-server:4443",
+	common.RobotNamePrefix:            "robot$",
 }
 
 // GetDefaultConfigMap returns the defailt config map for easier modification.

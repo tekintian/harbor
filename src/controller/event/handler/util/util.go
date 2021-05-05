@@ -3,18 +3,22 @@ package util
 import (
 	"errors"
 	"fmt"
-	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/core/config"
+	"strings"
+
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/orm"
+
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/distribution"
+	policy_model "github.com/goharbor/harbor/src/pkg/notification/policy/model"
 	"github.com/goharbor/harbor/src/pkg/notifier/event"
 	notifyModel "github.com/goharbor/harbor/src/pkg/notifier/model"
-	"strings"
 )
 
 // SendHookWithPolicies send hook by publishing topic of specified target type(notify type)
-func SendHookWithPolicies(policies []*models.NotificationPolicy, payload *notifyModel.Payload, eventType string) error {
+func SendHookWithPolicies(policies []*policy_model.Policy, payload *notifyModel.Payload, eventType string) error {
 	// if global notification configured disabled, return directly
-	if !config.NotificationEnable() {
+	if !config.NotificationEnable(orm.Context()) {
 		log.Debug("notification feature is not enabled")
 		return nil
 	}
@@ -56,11 +60,15 @@ func GetNameFromImgRepoFullName(repo string) string {
 }
 
 // BuildImageResourceURL ...
-func BuildImageResourceURL(repoName, tag string) (string, error) {
+func BuildImageResourceURL(repoName, reference string) (string, error) {
 	extURL, err := config.ExtURL()
 	if err != nil {
 		return "", fmt.Errorf("get external endpoint failed: %v", err)
 	}
-	resURL := fmt.Sprintf("%s/%s:%s", extURL, repoName, tag)
-	return resURL, nil
+
+	if distribution.IsDigest(reference) {
+		return fmt.Sprintf("%s/%s@%s", extURL, repoName, reference), nil
+	}
+
+	return fmt.Sprintf("%s/%s:%s", extURL, repoName, reference), nil
 }

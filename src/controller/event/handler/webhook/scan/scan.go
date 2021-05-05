@@ -16,20 +16,20 @@ package scan
 
 import (
 	"context"
+	"time"
+
 	o "github.com/astaxie/beego/orm"
+	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/event/handler/util"
-	"github.com/goharbor/harbor/src/lib/orm"
-	"github.com/goharbor/harbor/src/pkg/notifier/model"
-	"time"
-
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/notification"
-	"github.com/goharbor/harbor/src/pkg/project"
+	"github.com/goharbor/harbor/src/pkg/notifier/model"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 )
 
@@ -37,8 +37,13 @@ import (
 type Handler struct {
 }
 
+// Name ...
+func (si *Handler) Name() string {
+	return "ScanWebhook"
+}
+
 // Handle preprocess chart event data and then publish hook event
-func (si *Handler) Handle(value interface{}) error {
+func (si *Handler) Handle(ctx context.Context, value interface{}) error {
 	if value == nil {
 		return errors.New("empty scan artifact event")
 	}
@@ -48,7 +53,7 @@ func (si *Handler) Handle(value interface{}) error {
 		return errors.New("invalid scan artifact event type")
 	}
 
-	policies, err := notification.PolicyMgr.GetRelatedPolices(e.Artifact.NamespaceID, e.EventType)
+	policies, err := notification.PolicyMgr.GetRelatedPolices(ctx, e.Artifact.NamespaceID, e.EventType)
 	if err != nil {
 		return errors.Wrap(err, "scan preprocess handler")
 	}
@@ -60,12 +65,12 @@ func (si *Handler) Handle(value interface{}) error {
 	}
 
 	// Get project
-	project, err := project.Mgr.Get(e.Artifact.NamespaceID)
+	prj, err := project.Ctl.Get(orm.Context(), e.Artifact.NamespaceID, project.Metadata(true))
 	if err != nil {
 		return errors.Wrap(err, "scan preprocess handler")
 	}
 
-	payload, err := constructScanImagePayload(e, project)
+	payload, err := constructScanImagePayload(e, prj)
 	if err != nil {
 		return errors.Wrap(err, "scan preprocess handler")
 	}
@@ -105,17 +110,17 @@ func constructScanImagePayload(event *event.ScanImageEvent, project *models.Proj
 		Operator: event.Operator,
 	}
 
-	resURL, err := util.BuildImageResourceURL(event.Artifact.Repository, event.Artifact.Tag)
+	reference := event.Artifact.Digest
+	if reference == "" {
+		reference = event.Artifact.Tag
+	}
+
+	resURL, err := util.BuildImageResourceURL(event.Artifact.Repository, reference)
 	if err != nil {
 		return nil, errors.Wrap(err, "construct scan payload")
 	}
 
 	ctx := orm.NewContext(context.TODO(), o.NewOrm())
-
-	reference := event.Artifact.Digest
-	if reference == "" {
-		reference = event.Artifact.Tag
-	}
 
 	art, err := artifact.Ctl.GetByReference(ctx, event.Artifact.Repository, event.Artifact.Digest, nil)
 	if err != nil {
@@ -126,7 +131,7 @@ func constructScanImagePayload(event *event.ScanImageEvent, project *models.Proj
 	// If the report is still not ready in the total time, then failed at then
 	for i := 0; i < 10; i++ {
 		// First check in case it is ready
-		if re, err := scan.DefaultController.GetReport(ctx, art, []string{v1.MimeTypeNativeReport}); err == nil {
+		if re, err := scan.DefaultController.GetReport(ctx, art, []string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport}); err == nil {
 			if len(re) > 0 && len(re[0].Report) > 0 {
 				break
 			}
@@ -138,7 +143,7 @@ func constructScanImagePayload(event *event.ScanImageEvent, project *models.Proj
 	}
 
 	// Add scan overview
-	summaries, err := scan.DefaultController.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport})
+	summaries, err := scan.DefaultController.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport})
 	if err != nil {
 		return nil, errors.Wrap(err, "construct scan payload")
 	}

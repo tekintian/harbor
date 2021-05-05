@@ -17,11 +17,12 @@ package dao
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/lib/pq"
 	"strings"
 
-	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
-	"github.com/goharbor/harbor/src/pkg/types"
+	"github.com/goharbor/harbor/src/pkg/quota/types"
 )
 
 var (
@@ -104,7 +105,7 @@ func listOrderBy(query *q.Query) string {
 				if strings.HasPrefix(sort, prefix) {
 					resource := strings.TrimPrefix(sort, prefix)
 					if types.IsValidResource(types.ResourceName(resource)) {
-						field := fmt.Sprintf("%s->>'%s'", strings.TrimSuffix(prefix, "."), resource)
+						field := fmt.Sprintf("%s->>%s", strings.TrimSuffix(prefix, "."), pq.QuoteLiteral(resource))
 						orderBy = fmt.Sprintf("(%s) %s", castQuantity(field), order)
 						break
 					}

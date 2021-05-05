@@ -28,15 +28,24 @@ http {
   }
 
   upstream portal {
+{% if internal_tls.enabled %}
+    server portal:8443;
+{% else %}
     server portal:8080;
+{% endif %}
   }
-  
+
   log_format timed_combined '$remote_addr - '
     '"$request" $status $body_bytes_sent '
     '"$http_referer" "$http_user_agent" '
     '$request_time $upstream_response_time $pipe';
 
   access_log /dev/stdout timed_combined;
+
+  map $http_x_forwarded_proto $x_forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+  }
 
   include /etc/nginx/conf.d/*.server.conf;
 
@@ -65,17 +74,26 @@ http {
     add_header X-Frame-Options DENY;
     add_header Content-Security-Policy "frame-ancestors 'none'";
   
-    # costumized location config file can place to /etc/nginx dir with prefix harbor.https. and suffix .conf
+    # customized location config file can place to /etc/nginx dir with prefix harbor.https. and suffix .conf
     include /etc/nginx/conf.d/harbor.https.*.conf;
 
     location / {
+{% if internal_tls.enabled %}
+      proxy_pass https://portal/;
+
+      proxy_ssl_certificate         /etc/harbor/tls/proxy.crt;
+      proxy_ssl_certificate_key     /etc/harbor/tls/proxy.key;
+      proxy_ssl_trusted_certificate /harbor_cust_cert/harbor_internal_ca.crt;
+      proxy_ssl_verify_depth 2;
+      proxy_ssl_verify        on;
+      proxy_ssl_session_reuse on;
+{% else %}
       proxy_pass http://portal/;
+{% endif %}
       proxy_set_header Host $http_host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      
-      # When setting up Harbor behind other proxy, such as an Nginx instance, remove the below line if the proxy already has similar settings.
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
 
       proxy_cookie_path / "/; HttpOnly; Secure";
 
@@ -99,9 +117,7 @@ http {
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-      # When setting up Harbor behind other proxy, such as an Nginx instance, remove the below line if the proxy already has similar settings.
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
 
       proxy_cookie_path / "/; Secure";
 
@@ -125,9 +141,7 @@ http {
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-      # When setting up Harbor behind other proxy, such as an Nginx instance, remove the below line if the proxy already has similar settings.
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
 
       proxy_cookie_path / "/; Secure";
       
@@ -151,9 +165,7 @@ http {
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-      # When setting up Harbor behind other proxy, such as an Nginx instance, remove the below line if the proxy already has similar settings.
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
 
       proxy_cookie_path / "/; Secure";
       
@@ -181,11 +193,11 @@ http {
       proxy_set_header Host $http_host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      
-      # When setting up Harbor behind other proxy, such as an Nginx instance, remove the below line if the proxy already has similar settings.
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
       proxy_buffering off;
       proxy_request_buffering off;
+      proxy_send_timeout 900;
+      proxy_read_timeout 900;
     }
 
     location /service/ {
@@ -204,9 +216,7 @@ http {
       proxy_set_header Host $http_host;
       proxy_set_header X-Real-IP $remote_addr;
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      
-      # When setting up Harbor behind other proxy, such as an Nginx instance, remove the below line if the proxy already has similar settings.
-      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Proto $x_forwarded_proto;
 
       proxy_cookie_path / "/; Secure";
 
@@ -222,5 +232,32 @@ http {
       listen 8080;
       #server_name harbordomain.com;
       return 308 https://{{https_redirect}}$request_uri;
-  } 
+  }
+  {% if metric.enabled %}
+  upstream core_metrics {
+    server core:{{ metric.port }};
+  }
+
+  upstream js_metrics {
+    server jobservice:{{ metric.port }};
+  }
+
+  upstream registry_metrics {
+    server registry:{{ metric.port }};
+  }
+
+  upstream harbor_exporter {
+    server exporter:8080;
+  }
+
+  server {
+    listen 9090;
+    location = {{ metric.path }} {
+      if ($arg_comp = core) { proxy_pass http://core_metrics; }
+      if ($arg_comp = jobservice) { proxy_pass http://js_metrics; }
+      if ($arg_comp = registry) { proxy_pass http://registry_metrics; }
+      proxy_pass http://harbor_exporter;
+    }
+  }
+  {% endif %}
 }
