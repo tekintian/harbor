@@ -2,14 +2,19 @@ package robot
 
 import (
 	"context"
+	"os"
+	"testing"
+
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/utils"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils/test"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/q"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	rbac_model "github.com/goharbor/harbor/src/pkg/rbac/model"
 	"github.com/goharbor/harbor/src/pkg/robot/model"
 	htesting "github.com/goharbor/harbor/src/testing"
@@ -17,9 +22,6 @@ import (
 	"github.com/goharbor/harbor/src/testing/pkg/project"
 	"github.com/goharbor/harbor/src/testing/pkg/rbac"
 	"github.com/goharbor/harbor/src/testing/pkg/robot"
-	"github.com/stretchr/testify/suite"
-	"os"
-	"testing"
 )
 
 type ControllerTestSuite struct {
@@ -33,7 +35,7 @@ func (suite *ControllerTestSuite) TestGet() {
 
 	c := controller{robotMgr: robotMgr, rbacMgr: rbacMgr, proMgr: projectMgr}
 	ctx := context.TODO()
-	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&models.Project{ProjectID: 1, Name: "library"}, nil)
+	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&proModels.Project{ProjectID: 1, Name: "library"}, nil)
 	robotMgr.On("Get", mock.Anything, mock.Anything).Return(&model.Robot{
 		Name:        "library+test",
 		Description: "test get method",
@@ -88,7 +90,7 @@ func (suite *ControllerTestSuite) TestCreate() {
 	_, err := test.GenerateKey(secretKeyPath)
 	suite.Nil(err)
 	defer os.Remove(secretKeyPath)
-	os.Setenv("KEY_PATH", secretKeyPath)
+	suite.T().Setenv("KEY_PATH", secretKeyPath)
 
 	conf := map[string]interface{}{
 		common.RobotTokenDuration: "30",
@@ -101,7 +103,7 @@ func (suite *ControllerTestSuite) TestCreate() {
 
 	c := controller{robotMgr: robotMgr, rbacMgr: rbacMgr, proMgr: projectMgr}
 	ctx := context.TODO()
-	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&models.Project{ProjectID: 1, Name: "library"}, nil)
+	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&proModels.Project{ProjectID: 1, Name: "library"}, nil)
 	robotMgr.On("Create", mock.Anything, mock.Anything).Return(int64(1), nil)
 	rbacMgr.On("CreateRbacPolicy", mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
 	rbacMgr.On("CreatePermission", mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
@@ -164,7 +166,7 @@ func (suite *ControllerTestSuite) TestUpdate() {
 	config.InitWithSettings(conf)
 
 	robotMgr.On("Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&models.Project{ProjectID: 1, Name: "library"}, nil)
+	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&proModels.Project{ProjectID: 1, Name: "library"}, nil)
 	rbacMgr.On("DeletePermissionsByRole", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	rbacMgr.On("CreateRbacPolicy", mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
@@ -208,7 +210,7 @@ func (suite *ControllerTestSuite) TestList() {
 	c := controller{robotMgr: robotMgr, rbacMgr: rbacMgr, proMgr: projectMgr}
 	ctx := context.TODO()
 
-	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&models.Project{ProjectID: 1, Name: "library"}, nil)
+	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&proModels.Project{ProjectID: 1, Name: "library"}, nil)
 	robotMgr.On("List", mock.Anything, mock.Anything).Return([]*model.Robot{
 		{
 			Name:        "test",
@@ -233,7 +235,7 @@ func (suite *ControllerTestSuite) TestList() {
 			Action:   "push",
 		},
 	}, nil)
-	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&models.Project{ProjectID: 1, Name: "library"}, nil)
+	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&proModels.Project{ProjectID: 1, Name: "library"}, nil)
 	rs, err := c.List(ctx, &q.Query{
 		Keywords: map[string]interface{}{
 			"name": "test3",
@@ -257,7 +259,7 @@ func (suite *ControllerTestSuite) TestToScope() {
 	c := controller{robotMgr: robotMgr, rbacMgr: rbacMgr, proMgr: projectMgr}
 	ctx := context.TODO()
 
-	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&models.Project{ProjectID: 1, Name: "library"}, nil)
+	projectMgr.On("Get", mock.Anything, mock.Anything).Return(&proModels.Project{ProjectID: 1, Name: "library"}, nil)
 
 	p := &Permission{
 		Kind:      "system",
@@ -292,6 +294,26 @@ func (suite *ControllerTestSuite) TestToScope() {
 
 }
 
+func (suite *ControllerTestSuite) TestIsValidSec() {
+	sec := "1234abcdABCD"
+	suite.True(IsValidSec(sec))
+	sec = "1234abcd"
+	suite.False(IsValidSec(sec))
+	sec = "123abc"
+	suite.False(IsValidSec(sec))
+	// secret of length 128 characters long should be ok
+	sec = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd"
+	suite.True(IsValidSec(sec))
+	// secret of length larger than 128 characters long, such as 129 characters long, should return false
+	sec = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcde"
+	suite.False(IsValidSec(sec))
+}
+
+func (suite *ControllerTestSuite) TestCreateSec() {
+	_, pwd, _, err := CreateSec()
+	suite.Nil(err)
+	suite.True(IsValidSec(pwd))
+}
 func TestControllerTestSuite(t *testing.T) {
 	suite.Run(t, &ControllerTestSuite{})
 }

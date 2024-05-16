@@ -16,12 +16,14 @@ package http
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
+
 	openapi "github.com/go-openapi/errors"
+
 	commonhttp "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"net/http"
-	"strings"
 )
 
 var (
@@ -35,6 +37,7 @@ var (
 		errors.MethodNotAllowedCode:            http.StatusMethodNotAllowed,
 		errors.DENIED:                          http.StatusForbidden,
 		errors.NotFoundCode:                    http.StatusNotFound,
+		errors.RateLimitCode:                   http.StatusTooManyRequests,
 		errors.ConflictCode:                    http.StatusConflict,
 		errors.PreconditionCode:                http.StatusPreconditionFailed,
 		errors.ViolateForeignKeyConstraintCode: http.StatusPreconditionFailed,

@@ -17,12 +17,13 @@ package scanner
 import (
 	"testing"
 
-	"github.com/goharbor/harbor/src/lib/q"
-	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
-	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
+	htesting "github.com/goharbor/harbor/src/testing"
 )
 
 // BasicManagerTestSuite tests the basic manager
@@ -109,4 +110,13 @@ func (suite *BasicManagerTestSuite) TestDefault() {
 	require.NoError(suite.T(), err)
 	require.NotNil(suite.T(), dr)
 	assert.Equal(suite.T(), true, dr.IsDefault)
+}
+
+// TestGetDefaultScanner tests the get default scanner
+func (suite *BasicManagerTestSuite) TestGetDefaultScanner() {
+	ctx := suite.Context()
+	suite.mgr.SetAsDefault(ctx, suite.sampleUUID)
+	scanner, err := suite.mgr.DefaultScannerUUID(ctx)
+	suite.NoError(err)
+	suite.Equal(suite.sampleUUID, scanner)
 }

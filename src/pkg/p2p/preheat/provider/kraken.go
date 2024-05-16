@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package provider
 
 import (
@@ -7,8 +21,10 @@ import (
 	"time"
 
 	"github.com/docker/distribution/manifest/schema2"
-	cm "github.com/goharbor/harbor/src/common/models"
+
 	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/notification"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider/auth"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider/client"
@@ -44,7 +60,11 @@ func (kd *KrakenDriver) GetHealth() (*DriverStatus, error) {
 	}
 
 	url := fmt.Sprintf("%s%s", strings.TrimSuffix(kd.instance.Endpoint, "/"), krakenHealthPath)
-	_, err := client.GetHTTPClient(kd.instance.Insecure).Get(url, kd.getCred(), nil, nil)
+	url, err := lib.ValidateHTTPURL(url)
+	if err != nil {
+		return nil, err
+	}
+	_, err = client.GetHTTPClient(kd.instance.Insecure).Get(url, kd.getCred(), nil, nil)
 	if err != nil {
 		// Unhealthy
 		return nil, err
@@ -67,13 +87,13 @@ func (kd *KrakenDriver) Preheat(preheatingImage *PreheatImage) (*PreheatingStatu
 	}
 
 	url := fmt.Sprintf("%s%s", strings.TrimSuffix(kd.instance.Endpoint, "/"), krakenPreheatPath)
-	var events = make([]cm.Event, 0)
+	var events = make([]notification.Event, 0)
 	eventID := utils.GenerateRandomString()
-	event := cm.Event{
+	event := notification.Event{
 		ID:        eventID,
 		TimeStamp: time.Now().UTC(),
 		Action:    "push",
-		Target: &cm.Target{
+		Target: &notification.Target{
 			MediaType:  schema2.MediaTypeManifest,
 			Digest:     preheatingImage.Digest,
 			Repository: preheatingImage.ImageName,
@@ -82,7 +102,7 @@ func (kd *KrakenDriver) Preheat(preheatingImage *PreheatImage) (*PreheatingStatu
 		},
 	}
 	events = append(events, event)
-	var payload = cm.Notification{
+	var payload = notification.Notification{
 		Events: events,
 	}
 	_, err := client.GetHTTPClient(kd.instance.Insecure).Post(url, kd.getCred(), payload, nil)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
+
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/controller/replication"
 	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
@@ -45,7 +46,7 @@ type replicationAPI struct {
 	ctl replication.Controller
 }
 
-func (r *replicationAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (r *replicationAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
 	return nil
 }
 
@@ -85,8 +86,9 @@ func (r *replicationAPI) CreateReplicationPolicy(ctx context.Context, params ope
 	if len(params.Policy.Filters) > 0 {
 		for _, filter := range params.Policy.Filters {
 			policy.Filters = append(policy.Filters, &model.Filter{
-				Type:  filter.Type,
-				Value: filter.Value,
+				Type:       filter.Type,
+				Value:      filter.Value,
+				Decoration: filter.Decoration,
 			})
 		}
 	}
@@ -100,6 +102,17 @@ func (r *replicationAPI) CreateReplicationPolicy(ctx context.Context, params ope
 			}
 		}
 	}
+	if params.Policy.Speed != nil {
+		if *params.Policy.Speed < 0 {
+			*params.Policy.Speed = 0
+		}
+		policy.Speed = *params.Policy.Speed
+	}
+
+	if params.Policy.CopyByChunk != nil {
+		policy.CopyByChunk = *params.Policy.CopyByChunk
+	}
+
 	id, err := r.ctl.CreatePolicy(ctx, policy)
 	if err != nil {
 		return r.SendError(ctx, err)
@@ -141,8 +154,9 @@ func (r *replicationAPI) UpdateReplicationPolicy(ctx context.Context, params ope
 	if len(params.Policy.Filters) > 0 {
 		for _, filter := range params.Policy.Filters {
 			policy.Filters = append(policy.Filters, &model.Filter{
-				Type:  filter.Type,
-				Value: filter.Value,
+				Type:       filter.Type,
+				Value:      filter.Value,
+				Decoration: filter.Decoration,
 			})
 		}
 	}
@@ -156,6 +170,17 @@ func (r *replicationAPI) UpdateReplicationPolicy(ctx context.Context, params ope
 			}
 		}
 	}
+	if params.Policy.Speed != nil {
+		if *params.Policy.Speed < 0 {
+			*params.Policy.Speed = 0
+		}
+		policy.Speed = *params.Policy.Speed
+	}
+
+	if params.Policy.CopyByChunk != nil {
+		policy.CopyByChunk = *params.Policy.CopyByChunk
+	}
+
 	if err := r.ctl.UpdatePolicy(ctx, policy); err != nil {
 		return r.SendError(ctx, err)
 	}
@@ -325,6 +350,12 @@ func (r *replicationAPI) ListReplicationTasks(ctx context.Context, params operat
 	if err := r.RequireSystemAccess(ctx, rbac.ActionList, rbac.ResourceReplication); err != nil {
 		return r.SendError(ctx, err)
 	}
+	// check the existence of the replication execution
+	_, err := r.ctl.GetExecution(ctx, params.ID)
+	if err != nil {
+		return r.SendError(ctx, err)
+	}
+
 	query, err := r.BuildQuery(ctx, nil, params.Sort, params.Page, params.PageSize)
 	if err != nil {
 		return r.SendError(ctx, err)
@@ -412,7 +443,9 @@ func convertReplicationPolicy(policy *repctlmodel.Policy) *models.ReplicationPol
 		Name:                      policy.Name,
 		Override:                  policy.Override,
 		ReplicateDeletion:         policy.ReplicateDeletion,
+		Speed:                     &policy.Speed,
 		UpdateTime:                strfmt.DateTime(policy.UpdateTime),
+		CopyByChunk:               &policy.CopyByChunk,
 	}
 	if policy.SrcRegistry != nil {
 		p.SrcRegistry = convertRegistry(policy.SrcRegistry)
@@ -423,8 +456,9 @@ func convertReplicationPolicy(policy *repctlmodel.Policy) *models.ReplicationPol
 	if len(policy.Filters) > 0 {
 		for _, filter := range policy.Filters {
 			p.Filters = append(p.Filters, &models.ReplicationFilter{
-				Type:  string(filter.Type),
-				Value: filter.Value,
+				Type:       string(filter.Type),
+				Value:      filter.Value,
+				Decoration: filter.Decoration,
 			})
 		}
 	}

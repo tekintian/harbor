@@ -16,8 +16,10 @@ package replication
 
 import (
 	"context"
-	"strconv"
+	"encoding/json"
 
+	"github.com/goharbor/harbor/src/common/secret"
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/replication/model"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -31,10 +33,20 @@ const callbackFuncName = "REPLICATION_CALLBACK"
 
 func init() {
 	callbackFunc := func(ctx context.Context, param string) error {
-		policyID, err := strconv.ParseInt(param, 10, 64)
-		if err != nil {
+		params := make(map[string]interface{})
+		if err := json.Unmarshal([]byte(param), &params); err != nil {
 			return err
 		}
+
+		var policyID int64
+		if id, ok := params["policy_id"].(float64); ok {
+			policyID = int64(id)
+		}
+
+		if op, ok := params["operator"].(string); ok {
+			ctx = context.WithValue(ctx, operator.ContextKey{}, op)
+		}
+
 		policy, err := Ctl.GetPolicy(ctx, policyID)
 		if err != nil {
 			return err
@@ -70,8 +82,11 @@ func (c *controller) ListPolicies(ctx context.Context, query *q.Query) ([]*model
 
 func (c *controller) populateRegistry(ctx context.Context, p *pkgmodel.Policy) (*model.Policy, error) {
 	policy := &model.Policy{}
-	policy.From(p)
-	var srcRegistryID, destRegistryID int64 = 0, 0
+	err := policy.From(p)
+	if err != nil {
+		return nil, err
+	}
+	var srcRegistryID, destRegistryID int64
 	if policy.SrcRegistry != nil && policy.SrcRegistry.ID != 0 {
 		srcRegistryID = policy.SrcRegistry.ID
 		destRegistryID = 0
@@ -118,8 +133,13 @@ func (c *controller) CreatePolicy(ctx context.Context, policy *model.Policy) (in
 	}
 	// create schedule if needed
 	if policy.IsScheduledTrigger() {
-		if _, err = c.scheduler.Schedule(ctx, job.Replication, id, "", policy.Trigger.Settings.Cron,
-			callbackFuncName, id, map[string]interface{}{}); err != nil {
+		cbParams := map[string]interface{}{
+			"policy_id": id,
+			// the operator of schedule job is harbor-jobservice
+			"operator": secret.JobserviceUser,
+		}
+		if _, err = c.scheduler.Schedule(ctx, job.ReplicationVendorType, id, "", policy.Trigger.Settings.Cron,
+			callbackFuncName, cbParams, map[string]interface{}{}); err != nil {
 			return 0, err
 		}
 	}
@@ -131,7 +151,7 @@ func (c *controller) UpdatePolicy(ctx context.Context, policy *model.Policy, pro
 		return err
 	}
 	// delete the schedule
-	if err := c.scheduler.UnScheduleByVendor(ctx, job.Replication, policy.ID); err != nil {
+	if err := c.scheduler.UnScheduleByVendor(ctx, job.ReplicationVendorType, policy.ID); err != nil {
 		return err
 	}
 
@@ -145,8 +165,13 @@ func (c *controller) UpdatePolicy(ctx context.Context, policy *model.Policy, pro
 	}
 	// create schedule if needed
 	if policy.IsScheduledTrigger() {
-		if _, err := c.scheduler.Schedule(ctx, job.Replication, policy.ID, "", policy.Trigger.Settings.Cron,
-			callbackFuncName, policy.ID, map[string]interface{}{}); err != nil {
+		cbParams := map[string]interface{}{
+			"policy_id": policy.ID,
+			// the operator of schedule job is harbor-jobservice
+			"operator": secret.JobserviceUser,
+		}
+		if _, err := c.scheduler.Schedule(ctx, job.ReplicationVendorType, policy.ID, "", policy.Trigger.Settings.Cron,
+			callbackFuncName, cbParams, map[string]interface{}{}); err != nil {
 			return err
 		}
 	}
@@ -172,11 +197,11 @@ func (c *controller) validatePolicy(ctx context.Context, policy *model.Policy) e
 
 func (c *controller) DeletePolicy(ctx context.Context, id int64) error {
 	// delete the executions
-	if err := c.execMgr.DeleteByVendor(ctx, job.Replication, id); err != nil {
+	if err := c.execMgr.DeleteByVendor(ctx, job.ReplicationVendorType, id); err != nil {
 		return err
 	}
 	// delete the schedule
-	if err := c.scheduler.UnScheduleByVendor(ctx, job.Replication, id); err != nil {
+	if err := c.scheduler.UnScheduleByVendor(ctx, job.ReplicationVendorType, id); err != nil {
 		return err
 	}
 	// delete the policy

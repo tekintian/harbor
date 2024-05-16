@@ -5,7 +5,7 @@
   clr-icon.red-position {
     margin-left: 2px;
   }
-
+  /* stylelint-disable */
   .rightPos {
     position: absolute;
     z-index: 100;
@@ -32,4 +32,17 @@
   display: flex;
   align-items: center;
   height: 16px;
+}
+
+
+.icon {
+  margin-top: 3px;
+}
+
+.projects-col {
+  min-width: 14rem !important;
+}
+
+.permission-col {
+  min-width: 8rem !important;
 }

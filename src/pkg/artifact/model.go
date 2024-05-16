@@ -20,9 +20,10 @@ import (
 	"time"
 
 	"github.com/docker/distribution/manifest/manifestlist"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/artifact/dao"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // Artifact is the abstract object managed by Harbor. It hides the
@@ -30,9 +31,10 @@ import (
 // for all users.
 type Artifact struct {
 	ID                int64                  `json:"id"`
-	Type              string                 `json:"type"`                // image, chart, etc
+	Type              string                 `json:"type"`                // image, chart or other OCI compatible
 	MediaType         string                 `json:"media_type"`          // the media type of artifact. Mostly, it's the value of `manifest.config.mediatype`
 	ManifestMediaType string                 `json:"manifest_media_type"` // the media type of manifest/index
+	ArtifactType      string                 `json:"artifact_type"`       // the artifactType of manifest/index
 	ProjectID         int64                  `json:"project_id"`
 	RepositoryID      int64                  `json:"repository_id"`
 	RepositoryName    string                 `json:"repository_name"`
@@ -62,6 +64,7 @@ func (a *Artifact) From(art *dao.Artifact) {
 	a.Type = art.Type
 	a.MediaType = art.MediaType
 	a.ManifestMediaType = art.ManifestMediaType
+	a.ArtifactType = art.ArtifactType
 	a.ProjectID = art.ProjectID
 	a.RepositoryID = art.RepositoryID
 	a.RepositoryName = art.RepositoryName
@@ -91,6 +94,7 @@ func (a *Artifact) To() *dao.Artifact {
 		Type:              a.Type,
 		MediaType:         a.MediaType,
 		ManifestMediaType: a.ManifestMediaType,
+		ArtifactType:      a.ArtifactType,
 		ProjectID:         a.ProjectID,
 		RepositoryID:      a.RepositoryID,
 		RepositoryName:    a.RepositoryName,

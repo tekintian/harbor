@@ -1,7 +1,22 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package rule
 
 import (
 	"context"
+
 	"github.com/goharbor/harbor/src/controller/immutable"
 	"github.com/goharbor/harbor/src/lib/q"
 	iselector "github.com/goharbor/harbor/src/lib/selector"
@@ -50,12 +65,13 @@ func (rm *Matcher) Match(ctx context.Context, pid int64, c iselector.Candidate) 
 		// match tag according to the tag selectors
 		var tagCandidates []*iselector.Candidate
 		tagSelectors := r.TagSelectors
-		if len(tagSelectors) < 0 {
+		if len(tagSelectors) < 1 {
 			continue
 		}
 		tagSelector := r.TagSelectors[0]
+		// for immutable policy, should not keep untagged artifacts by default.
 		selector, err = index.Get(tagSelector.Kind, tagSelector.Decoration,
-			tagSelector.Pattern, "")
+			tagSelector.Pattern, "{\"untagged\": false}")
 		if err != nil {
 			return false, err
 		}

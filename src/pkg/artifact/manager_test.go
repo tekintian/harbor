@@ -19,11 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/lib/q"
-	"github.com/goharbor/harbor/src/pkg/artifact/dao"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg/artifact/dao"
 )
 
 type fakeDao struct {
@@ -55,6 +56,10 @@ func (f *fakeDao) Delete(ctx context.Context, id int64) error {
 	return args.Error(0)
 }
 func (f *fakeDao) Update(ctx context.Context, artifact *dao.Artifact, props ...string) error {
+	args := f.Called()
+	return args.Error(0)
+}
+func (f *fakeDao) UpdatePullTime(ctx context.Context, id int64, pullTime time.Time) error {
 	args := f.Called()
 	return args.Error(0)
 }
@@ -229,6 +234,13 @@ func (m *managerTestSuite) TestUpdate() {
 		ID:       1,
 		PullTime: time.Now(),
 	}, "PullTime")
+	m.Require().Nil(err)
+	m.dao.AssertExpectations(m.T())
+}
+
+func (m *managerTestSuite) TestUpdatePullTime() {
+	m.dao.On("UpdatePullTime", mock.Anything).Return(nil)
+	err := m.mgr.UpdatePullTime(nil, 1, time.Now())
 	m.Require().Nil(err)
 	m.dao.AssertExpectations(m.T())
 }

@@ -1,10 +1,23 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package huawei
 
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/pkg/registry/auth/basic"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -15,7 +28,7 @@ import (
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/goharbor/harbor/src/pkg/reg/util"
+	"github.com/goharbor/harbor/src/pkg/registry/auth/basic"
 )
 
 func init() {
@@ -101,10 +114,10 @@ func (a *adapter) ListNamespaces(query *model.NamespaceQuery) ([]*model.Namespac
 	defer resp.Body.Close()
 	code := resp.StatusCode
 	if code >= 300 || code < 200 {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return namespaces, fmt.Errorf("[%d][%s]", code, string(body))
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return namespaces, err
 	}
@@ -133,7 +146,7 @@ func (a *adapter) ListNamespaces(query *model.NamespaceQuery) ([]*model.Namespac
 }
 
 // ConvertResourceMetadata convert resource metadata for Huawei SWR
-func (a *adapter) ConvertResourceMetadata(resourceMetadata *model.ResourceMetadata, namespace *model.Namespace) (*model.ResourceMetadata, error) {
+func (a *adapter) ConvertResourceMetadata(resourceMetadata *model.ResourceMetadata, _ *model.Namespace) (*model.ResourceMetadata, error) {
 	metadata := &model.ResourceMetadata{
 		Repository: resourceMetadata.Repository,
 		Vtags:      resourceMetadata.Vtags,
@@ -186,7 +199,7 @@ func (a *adapter) PrepareForPush(resources []*model.Resource) error {
 		defer resp.Body.Close()
 		code := resp.StatusCode
 		if code >= 300 || code < 200 {
-			body, _ := ioutil.ReadAll(resp.Body)
+			body, _ := io.ReadAll(resp.Body)
 			return fmt.Errorf("[%d][%s]", code, string(body))
 		}
 
@@ -218,10 +231,10 @@ func (a *adapter) GetNamespace(namespaceStr string) (*model.Namespace, error) {
 	defer resp.Body.Close()
 	code := resp.StatusCode
 	if code >= 300 || code < 200 {
-		body, _ := ioutil.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		return namespace, fmt.Errorf("[%d][%s]", code, string(body))
 	}
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return namespace, err
 	}
@@ -255,7 +268,7 @@ func newAdapter(registry *model.Registry) (adp.Adapter, error) {
 		modifiers = append(modifiers, authorizer)
 	}
 
-	transport := util.GetHTTPTransport(registry.Insecure)
+	transport := common_http.GetHTTPTransport(common_http.WithInsecure(registry.Insecure))
 	return &adapter{
 		Adapter:  native.NewAdapter(registry),
 		registry: registry,
@@ -269,7 +282,6 @@ func newAdapter(registry *model.Registry) (adp.Adapter, error) {
 			Transport: transport,
 		},
 	}, nil
-
 }
 
 type hwNamespaceList struct {

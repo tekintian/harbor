@@ -21,11 +21,17 @@ import (
 )
 
 func TestMatchManifestURLPattern(t *testing.T) {
-	_, _, ok := MatchManifestURLPattern("")
-	assert.False(t, ok)
+	_, _, ok := MatchManifestURLPattern("/v2/library/hello-world/manifests/.Invalid")
+	assert.True(t, ok)
 
 	_, _, ok = MatchManifestURLPattern("/v2/")
 	assert.False(t, ok)
+
+	_, _, ok = MatchManifestURLPattern("/v2/library/hello-world/manifests//")
+	assert.True(t, ok)
+
+	_, _, ok = MatchManifestURLPattern("/v2/library/hello-world/manifests/###")
+	assert.True(t, ok)
 
 	repository, reference, ok := MatchManifestURLPattern("/v2/library/hello-world/manifests/latest")
 	assert.True(t, ok)
@@ -101,4 +107,47 @@ func TestMatchCatalogURLPattern(t *testing.T) {
 
 		assert.Equal(t, c.match, V2CatalogURLRe.MatchString(c.url), "failed for %s", c.url)
 	}
+}
+
+func TestMatchReferrersURLPattern(t *testing.T) {
+	cases := []struct {
+		url   string
+		match bool
+	}{
+		{
+			url:   "/v2/library/hello-world/referrers/!@#!@#%",
+			match: true,
+		},
+		{
+			url:   "/v2/library/hello-world/referrers/test",
+			match: true,
+		},
+		{
+			url:   "/v2/library/hello-world/referrers/sha256:e5785cb0c62cebbed4965129bae371f0589cadd6d84798fb58c2c5f9e237efd9",
+			match: true,
+		},
+		{
+			url:   "/v2/library/hello-world/referrers/e5785cb0c62cebbed4965129bae371f0589cadd6d84798fb58c2c5f9e237efd9",
+			match: true,
+		},
+		{
+			url:   "/v2/library/hello-world/referrers/.Invalid",
+			match: true,
+		},
+		{
+			url:   "/v2/library/hello-world/referrers//v2/library/photon/referrers/sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			match: true,
+		},
+	}
+	for _, c := range cases {
+		assert.Equal(t, c.match, V2ReferrersURLRe.MatchString(c.url), "failed for %s", c.url)
+	}
+}
+
+func TestRepositoryNamePattern(t *testing.T) {
+	assert := assert.New(t)
+	assert.False(RepositoryNameRe.MatchString("a/*"))
+	assert.False(RepositoryNameRe.MatchString("a/"))
+	assert.True(RepositoryNameRe.MatchString("a/b"))
+	assert.True(RepositoryNameRe.MatchString("a"))
 }

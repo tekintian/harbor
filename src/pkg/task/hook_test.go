@@ -19,10 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/pkg/task/dao"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/pkg/task/dao"
 )
 
 type hookHandlerTestSuite struct {
@@ -43,7 +44,7 @@ func (h *hookHandlerTestSuite) SetupTest() {
 
 func (h *hookHandlerTestSuite) TestHandle() {
 	// handle check in data
-	checkInProcessorRegistry["test"] = func(ctx context.Context, task *Task, data string) (err error) { return nil }
+	checkInProcessorRegistry["test"] = func(ctx context.Context, task *Task, sc *job.StatusChange) (err error) { return nil }
 	defer delete(checkInProcessorRegistry, "test")
 	h.taskDAO.On("List", mock.Anything, mock.Anything).Return([]*dao.Task{
 		{
@@ -79,17 +80,21 @@ func (h *hookHandlerTestSuite) TestHandle() {
 		ID:         1,
 		VendorType: "test",
 	}, nil)
-	h.execDAO.On("RefreshStatus", mock.Anything, mock.Anything).Return(true, job.RunningStatus.String(), nil)
-	sc = &job.StatusChange{
-		Status: job.SuccessStatus.String(),
-		Metadata: &job.StatsInfo{
-			Revision: time.Now().Unix(),
-		},
+
+	// test update status non-immediately when receive the hook
+	{
+		h.execDAO.On("AsyncRefreshStatus", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+		sc = &job.StatusChange{
+			Status: job.SuccessStatus.String(),
+			Metadata: &job.StatsInfo{
+				Revision: time.Now().Unix(),
+			},
+		}
+		err = h.handler.Handle(nil, sc)
+		h.Require().Nil(err)
+		h.taskDAO.AssertExpectations(h.T())
+		h.execDAO.AssertExpectations(h.T())
 	}
-	err = h.handler.Handle(nil, sc)
-	h.Require().Nil(err)
-	h.taskDAO.AssertExpectations(h.T())
-	h.execDAO.AssertExpectations(h.T())
 }
 
 func TestHookHandlerTestSuite(t *testing.T) {

@@ -15,10 +15,6 @@ package controllers
 
 import (
 	"fmt"
-	"github.com/goharbor/harbor/src/core/middlewares"
-	"github.com/goharbor/harbor/src/lib"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,13 +23,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/astaxie/beego"
+	"github.com/beego/beego/v2/server/web"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/models"
 	utilstest "github.com/goharbor/harbor/src/common/utils/test"
+	"github.com/goharbor/harbor/src/core/middlewares"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/orm"
 	_ "github.com/goharbor/harbor/src/pkg/config/db"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
-	"github.com/stretchr/testify/assert"
 )
 
 func init() {
@@ -41,13 +41,13 @@ func init() {
 	dir := filepath.Dir(file)
 	dir = filepath.Join(dir, "..")
 	apppath, _ := filepath.Abs(dir)
-	beego.BConfig.WebConfig.Session.SessionOn = true
-	beego.TestBeegoInit(apppath)
-	beego.AddTemplateExt("htm")
+	web.BConfig.WebConfig.Session.SessionOn = true
+	web.TestBeegoInit(apppath)
+	web.AddTemplateExt("htm")
 
-	beego.Router("/c/login", &CommonController{}, "post:Login")
-	beego.Router("/c/log_out", &CommonController{}, "get:LogOut")
-	beego.Router("/c/userExists", &CommonController{}, "post:UserExists")
+	web.Router("/c/login", &CommonController{}, "post:Login")
+	web.Router("/c/log_out", &CommonController{}, "get:LogOut")
+	web.Router("/c/userExists", &CommonController{}, "post:UserExists")
 }
 
 func TestMain(m *testing.M) {
@@ -56,35 +56,6 @@ func TestMain(m *testing.M) {
 	if rc != 0 {
 		os.Exit(rc)
 	}
-}
-
-// TestUserResettable
-func TestUserResettable(t *testing.T) {
-	assert := assert.New(t)
-	DBAuthConfig := map[string]interface{}{
-		common.AUTHMode:        common.DBAuth,
-		common.TokenExpiration: 30,
-	}
-
-	LDAPAuthConfig := map[string]interface{}{
-		common.AUTHMode:        common.LDAPAuth,
-		common.TokenExpiration: 30,
-	}
-	config.InitWithSettings(LDAPAuthConfig)
-	u1 := &models.User{
-		UserID:   3,
-		Username: "daniel",
-		Email:    "daniel@test.com",
-	}
-	u2 := &models.User{
-		UserID:   1,
-		Username: "jack",
-		Email:    "jack@test.com",
-	}
-	assert.False(isUserResetable(u1))
-	assert.True(isUserResetable(u2))
-	config.InitWithSettings(DBAuthConfig)
-	assert.True(isUserResetable(u1))
 }
 
 func TestRedirectForOIDC(t *testing.T) {
@@ -100,7 +71,7 @@ func TestRedirectForOIDC(t *testing.T) {
 func TestAll(t *testing.T) {
 	config.InitWithSettings(utilstest.GetUnitTestConfig())
 	assert := assert.New(t)
-	handler := http.Handler(beego.BeeApp.Handlers)
+	handler := http.Handler(web.BeeApp.Handlers)
 	mws := middlewares.MiddleWares()
 	for i := len(mws) - 1; i >= 0; i-- {
 		if mws[i] == nil {

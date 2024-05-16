@@ -16,8 +16,10 @@ package metadata
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 var testingMetaDataArray = []Item{
@@ -27,6 +29,7 @@ var testingMetaDataArray = []Item{
 	{Name: "ldap_verify_cert", ItemType: &BoolType{}, Scope: "user", Group: "ldapbasic"},
 	{Name: "sample_map_setting", ItemType: &MapType{}, Scope: "user", Group: "ldapbasic"},
 	{Name: "scan_all_policy", ItemType: &MapType{}, Scope: "user", Group: "basic"},
+	{Name: "sample_rate", ItemType: &Float64Type{}, Scope: "system", Group: "basic"},
 }
 
 // createCfgValue ... Create a ConfigureValue object, only used in test
@@ -58,6 +61,12 @@ func TestConfigureValue_GetStringToStringMap(t *testing.T) {
 	assert.Equal(t, val, map[string]interface{}{"sample": "abc"})
 	Instance().init()
 }
+
+func TestConfigureValue_GetDuration(t *testing.T) {
+	assert.Equal(t, createCfgValue("postgresql_conn_max_lifetime", "5m").GetDuration(), 5*time.Minute)
+	assert.Equal(t, createCfgValue("postgresql_conn_max_lifetime", "").GetDuration(), time.Duration(0))
+}
+
 func TestConfigureValue_GetInt(t *testing.T) {
 	assert.Equal(t, createCfgValue("ldap_timeout", "5").GetInt(), 5)
 }
@@ -65,6 +74,11 @@ func TestConfigureValue_GetInt(t *testing.T) {
 func TestConfigureValue_GetInt64(t *testing.T) {
 	Instance().initFromArray(testingMetaDataArray)
 	assert.Equal(t, createCfgValue("ulimit", "99999").GetInt64(), int64(99999))
+}
+
+func TestConfigureValue_GetFloat64(t *testing.T) {
+	Instance().initFromArray(testingMetaDataArray)
+	assert.Equal(t, createCfgValue("sample_rate", "0.5").GetFloat64(), float64(0.5))
 }
 
 func TestNewScanAllPolicy(t *testing.T) {

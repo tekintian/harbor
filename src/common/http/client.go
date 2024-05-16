@@ -16,64 +16,16 @@ package http
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
-	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"reflect"
-	"time"
 
 	"github.com/goharbor/harbor/src/common/http/modifier"
 	"github.com/goharbor/harbor/src/lib"
 )
-
-const (
-	// InsecureTransport used to get the insecure http Transport
-	InsecureTransport = iota
-	// SecureTransport used to get the external secure http Transport
-	SecureTransport
-)
-
-var (
-	secureHTTPTransport   *http.Transport
-	insecureHTTPTransport *http.Transport
-)
-
-func init() {
-	secureHTTPTransport = newDefaultTransport()
-	insecureHTTPTransport = newDefaultTransport()
-	insecureHTTPTransport.TLSClientConfig.InsecureSkipVerify = true
-
-	if InternalTLSEnabled() {
-		tlsConfig, err := GetInternalTLSConfig()
-		if err != nil {
-			panic(err)
-		}
-		secureHTTPTransport.TLSClientConfig = tlsConfig
-	}
-}
-
-// Use this instead of Default Transport in library because it sets ForceAttemptHTTP2 to true
-// And that options introduced in go 1.13 will cause the https requests hang forever in replication environment
-func newDefaultTransport() *http.Transport {
-	return &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-			DualStack: true,
-		}).DialContext,
-		TLSClientConfig:       &tls.Config{},
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	}
-}
 
 // Client is a util for common HTTP operations, such Get, Head, Post, Put and Delete.
 // Use Do instead if  those methods can not meet your requirement
@@ -82,25 +34,9 @@ type Client struct {
 	client    *http.Client
 }
 
-// GetHTTPTransport returns HttpTransport based on insecure configuration
-func GetHTTPTransport(clientType uint) *http.Transport {
-	switch clientType {
-	case SecureTransport:
-		return secureHTTPTransport
-	case InsecureTransport:
-		return insecureHTTPTransport
-	default:
-		// default Transport is secure one
-		return secureHTTPTransport
-	}
-}
-
-// GetHTTPTransportByInsecure returns a insecure HttpTransport if insecure is true or it returns secure one
-func GetHTTPTransportByInsecure(insecure bool) *http.Transport {
-	if insecure {
-		return insecureHTTPTransport
-	}
-	return secureHTTPTransport
+// GetClient returns the http.Client
+func (c *Client) GetClient() *http.Client {
+	return c.client
 }
 
 // NewClient creates an instance of Client.
@@ -112,7 +48,7 @@ func NewClient(c *http.Client, modifiers ...modifier.Modifier) *Client {
 	}
 	if client.client == nil {
 		client.client = &http.Client{
-			Transport: GetHTTPTransport(SecureTransport),
+			Transport: GetHTTPTransport(),
 		}
 	}
 	if len(modifiers) > 0 {
@@ -190,7 +126,6 @@ func (c *Client) Post(url string, v ...interface{}) error {
 func (c *Client) Put(url string, v ...interface{}) error {
 	var reader io.Reader
 	if len(v) > 0 {
-		data := []byte{}
 		data, err := json.Marshal(v[0])
 		if err != nil {
 			return err
@@ -224,7 +159,7 @@ func (c *Client) do(req *http.Request) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +201,7 @@ func (c *Client) GetAndIteratePagination(endpoint string, v interface{}) error {
 		if err != nil {
 			return err
 		}
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			return err
@@ -289,6 +224,14 @@ func (c *Client) GetAndIteratePagination(endpoint string, v interface{}) error {
 		for _, link := range links {
 			if link.Rel == "next" {
 				endpoint = url.Scheme + "://" + url.Host + link.URL
+				url, err = url.Parse(endpoint)
+				if err != nil {
+					return err
+				}
+				// encode the query parameters to avoid bad request
+				// e.g. ?q=name={p1 p2 p3} need to be encoded to ?q=name%3D%7Bp1+p2+p3%7D
+				url.RawQuery = url.Query().Encode()
+				endpoint = url.String()
 				break
 			}
 		}

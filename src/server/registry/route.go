@@ -19,10 +19,12 @@ import (
 
 	"github.com/goharbor/harbor/src/server/middleware/blob"
 	"github.com/goharbor/harbor/src/server/middleware/contenttrust"
+	"github.com/goharbor/harbor/src/server/middleware/cosign"
 	"github.com/goharbor/harbor/src/server/middleware/immutable"
 	"github.com/goharbor/harbor/src/server/middleware/metric"
 	"github.com/goharbor/harbor/src/server/middleware/quota"
 	"github.com/goharbor/harbor/src/server/middleware/repoproxy"
+	"github.com/goharbor/harbor/src/server/middleware/subject"
 	"github.com/goharbor/harbor/src/server/middleware/v2auth"
 	"github.com/goharbor/harbor/src/server/middleware/vulnerable"
 	"github.com/goharbor/harbor/src/server/router"
@@ -44,6 +46,7 @@ func RegisterRoutes() {
 		Method(http.MethodGet).
 		Path("/*/tags/list").
 		Middleware(metric.InjectOpIDMiddleware(metric.ListTagOperationID)).
+		Middleware(repoproxy.TagsListMiddleware()).
 		Handler(newTagHandler())
 	// manifest
 	root.NewRoute().
@@ -51,7 +54,7 @@ func RegisterRoutes() {
 		Path("/*/manifests/:reference").
 		Middleware(metric.InjectOpIDMiddleware(metric.ManifestOperationID)).
 		Middleware(repoproxy.ManifestMiddleware()).
-		Middleware(contenttrust.Middleware()).
+		Middleware(contenttrust.ContentTrust()).
 		Middleware(vulnerable.Middleware()).
 		HandlerFunc(getManifest)
 	root.NewRoute().
@@ -59,6 +62,8 @@ func RegisterRoutes() {
 		Path("/*/manifests/:reference").
 		Middleware(metric.InjectOpIDMiddleware(metric.ManifestOperationID)).
 		Middleware(repoproxy.ManifestMiddleware()).
+		Middleware(contenttrust.ContentTrust()).
+		Middleware(vulnerable.Middleware()).
 		HandlerFunc(getManifest)
 	root.NewRoute().
 		Method(http.MethodDelete).
@@ -73,6 +78,8 @@ func RegisterRoutes() {
 		Middleware(repoproxy.DisableBlobAndManifestUploadMiddleware()).
 		Middleware(immutable.Middleware()).
 		Middleware(quota.PutManifestMiddleware()).
+		Middleware(cosign.SignatureMiddleware()).
+		Middleware(subject.Middleware()).
 		Middleware(blob.PutManifestMiddleware()).
 		HandlerFunc(putManifest)
 	// blob head
@@ -112,6 +119,11 @@ func RegisterRoutes() {
 		Middleware(quota.PutBlobUploadMiddleware()).
 		Middleware(blob.PutBlobUploadMiddleware()).
 		Handler(proxy)
+	root.NewRoute().
+		Method(http.MethodGet).
+		Path("/*/referrers/:reference").
+		Middleware(metric.InjectOpIDMiddleware(metric.ReferrersOperationID)).
+		Handler(newReferrersHandler())
 	// others
 	root.NewRoute().Path("/*").Middleware(metric.InjectOpIDMiddleware(metric.OthersOperationID)).Handler(proxy)
 }

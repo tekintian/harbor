@@ -16,16 +16,17 @@ package provider
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"time"
 
-	cm "github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/notification"
 )
 
 // This is a package to provide mock utilities.
+var preheatMap = make(map[string]struct{})
 
 // MockDragonflyProvider mocks a Dragonfly server.
 func MockDragonflyProvider() *httptest.Server {
@@ -44,7 +45,7 @@ func MockDragonflyProvider() *httptest.Server {
 				return
 			}
 
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte(err.Error()))
@@ -57,6 +58,19 @@ func MockDragonflyProvider() *httptest.Server {
 				_, _ = w.Write([]byte(err.Error()))
 				return
 			}
+
+			if image.ImageName == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			if _, ok := preheatMap[image.Digest]; ok {
+				w.WriteHeader(http.StatusAlreadyReported)
+				_, _ = w.Write([]byte(`{"ID":""}`))
+				return
+			}
+
+			preheatMap[image.Digest] = struct{}{}
 
 			if image.Type == "image" &&
 				image.URL == "https://harbor.com" &&
@@ -81,6 +95,61 @@ func MockDragonflyProvider() *httptest.Server {
 			}
 			bytes, _ := json.Marshal(status)
 			_, _ = w.Write(bytes)
+		case strings.Replace(preheatTaskEndpoint, "{task_id}", "preheat-job-exist-with-no-id", 1):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+			status := &dragonflyPreheatInfo{
+				ID:         "preheat-exist-with-no-id",
+				StartTime:  time.Now().UTC().String(),
+				FinishTime: time.Now().Add(5 * time.Minute).UTC().String(),
+				Status:     "FAILED",
+				ErrorMsg:   "{\"Code\":208,\"Msg\":\"preheat task already exists, id:\"}",
+			}
+			bytes, _ := json.Marshal(status)
+			_, _ = w.Write(bytes)
+		case strings.Replace(preheatTaskEndpoint, "{task_id}", "preheat-job-normal-failed", 1):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+			status := &dragonflyPreheatInfo{
+				ID:         "preheat-job-exist-with-id-1",
+				StartTime:  time.Now().UTC().String(),
+				FinishTime: time.Now().Add(5 * time.Minute).UTC().String(),
+				Status:     "FAILED",
+				ErrorMsg:   "{\"Code\":208,\"Msg\":\"some msg\"}",
+			}
+			bytes, _ := json.Marshal(status)
+			_, _ = w.Write(bytes)
+		case strings.Replace(preheatTaskEndpoint, "{task_id}", "preheat-job-exist-with-id-1", 1):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+			status := &dragonflyPreheatInfo{
+				ID:         "preheat-job-exist-with-id-1",
+				StartTime:  time.Now().UTC().String(),
+				FinishTime: time.Now().Add(5 * time.Minute).UTC().String(),
+				Status:     "FAILED",
+				ErrorMsg:   "{\"Code\":208,\"Msg\":\"preheat task already exists, id:preheat-job-exist-with-id-1-1\"}",
+			}
+			bytes, _ := json.Marshal(status)
+			_, _ = w.Write(bytes)
+		case strings.Replace(preheatTaskEndpoint, "{task_id}", "preheat-job-exist-with-id-1-1", 1):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		case strings.Replace(preheatTaskEndpoint, "{task_id}", "preheat-job-err-body-json", 1):
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusNotImplemented)
+				return
+			}
+			bodyStr := "\"err body\""
+			_, _ = w.Write([]byte(bodyStr))
 		default:
 			w.WriteHeader(http.StatusNotImplemented)
 		}
@@ -104,15 +173,15 @@ func MockKrakenProvider() *httptest.Server {
 				return
 			}
 
-			data, err := ioutil.ReadAll(r.Body)
+			data, err := io.ReadAll(r.Body)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = w.Write([]byte(err.Error()))
 				return
 			}
 
-			var payload = &cm.Notification{
-				Events: []cm.Event{},
+			var payload = &notification.Notification{
+				Events: []notification.Event{},
 			}
 
 			if err := json.Unmarshal(data, payload); err != nil {

@@ -6,7 +6,7 @@
 
 .h5-override {
     display: inline-block !important;
-    margin-top: 0px !important;
+    margin-top: 0 !important;
     margin-bottom: 12px;
 }
 
@@ -15,12 +15,7 @@
     margin-bottom: 24px;
 }
 
-.info-tips-icon {
-    color: grey;
-}
-
 .info-tips-icon:hover {
-    color: #007CBB;
     cursor: pointer;
 }
 
@@ -34,18 +29,19 @@
     border: 0;
 }
 
-:host>>>.dropdown-menu {
+:host::ng-deep.dropdown-menu {
     min-width: 360px;
     max-width: 720px;
 }
 
 .btn-font {
-    font-size: 13px !important;
+    font-size: 14px !important;
 }
+
 .hide{
     display:none;
 }
-
+/* stylelint-disable */
 .inputTarget {
     width: 1px;
     min-width: 0;

@@ -1,12 +1,27 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tencentcr
 
 import (
 	"errors"
 	"strings"
 
-	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
 	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
+
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 func (a *adapter) createPrivateNamespace(namespace string) (err error) {
@@ -54,7 +69,7 @@ func (a *adapter) createRepository(namespace, repository string) (err error) {
 	repoReq.RegistryId = a.registryID
 	repoReq.NamespaceName = &namespace
 	repoReq.RepositoryName = &repository
-	var repoResp = tcr.NewDescribeRepositoriesResponse()
+	var repoResp *tcr.DescribeRepositoriesResponse
 	repoResp, err = a.tcrClient.DescribeRepositories(repoReq)
 	if err != nil {
 		return
@@ -69,7 +84,7 @@ func (a *adapter) createRepository(namespace, repository string) (err error) {
 	req.NamespaceName = &namespace
 	req.RepositoryName = &repository
 	req.RegistryId = a.registryID
-	var resp = tcr.NewCreateRepositoryResponse()
+	var resp *tcr.CreateRepositoryResponse
 	resp, err = a.tcrClient.CreateRepository(req)
 	if err != nil {
 		log.Debugf("[tencent-tcr.PrepareForPush.createRepository] error=%v", err)
@@ -124,17 +139,25 @@ func (a *adapter) isNamespaceExist(namespace string) (exist bool, err error) {
 	var req = tcr.NewDescribeNamespacesRequest()
 	req.NamespaceName = &namespace
 	req.RegistryId = a.registryID
-	var resp = tcr.NewDescribeNamespacesResponse()
+	var resp *tcr.DescribeNamespacesResponse
 	resp, err = a.tcrClient.DescribeNamespaces(req)
 	if err != nil {
 		return
 	}
 
 	log.Warningf("[tencent-tcr.PrepareForPush.isNamespaceExist] namespace=%s, total=%d", namespace, *resp.Response.TotalCount)
-	if int(*resp.Response.TotalCount) != 1 {
-		return
+	exist = isTcrNsExist(namespace, resp.Response.NamespaceList)
+
+	return
+}
+
+func isTcrNsExist(name string, list []*tcr.TcrNamespaceInfo) (exist bool) {
+	for _, ns := range list {
+		if *ns.Name == name {
+			exist = true
+			return
+		}
 	}
-	exist = true
 	return
 }
 
@@ -150,7 +173,8 @@ func (a *adapter) listReposByNamespace(namespace string) (repos []tcr.TcrReposit
 	req.Limit = a.pageSize
 	var resp = tcr.NewDescribeRepositoriesResponse()
 
-	var page int64
+	var page int64 = 1
+	var repositories []string
 	for {
 		req.Offset = common.Int64Ptr(page)
 		resp, err = a.tcrClient.DescribeRepositories(req)
@@ -161,10 +185,12 @@ func (a *adapter) listReposByNamespace(namespace string) (repos []tcr.TcrReposit
 
 		size := len(resp.Response.RepositoryList)
 		for i, repo := range resp.Response.RepositoryList {
-			log.Debugf("[tencent-tcr.listReposByNamespace.DescribeRepositories] Retrives page=%d repo(%d/%d)=%s", page, i, size, *repo.Name)
+			log.Debugf("[tencent-tcr.listReposByNamespace.DescribeRepositories] Retrives total=%d page=%d repo(%d/%d)=%s", *resp.Response.TotalCount, page, i, size, *repo.Name)
 			repos = append(repos, *repo)
+			repositories = append(repositories, *repo.Name)
 		}
 
+		log.Debugf("[tencent-tcr.listReposByNamespace.DescribeRepositories] total=%d now=%d page=%d,repositories=%v", *resp.Response.TotalCount, len(repos), page, repositories)
 		if len(repos) == int(*resp.Response.TotalCount) {
 			log.Debugf("[tencent-tcr.listReposByNamespace.DescribeRepositories] Retrives all repos.")
 			break
@@ -198,10 +224,10 @@ func (a *adapter) getImages(namespace, repo, tag string) (images []*tcr.TcrImage
 	}
 	var resp = tcr.NewDescribeImagesResponse()
 
-	var page int64
+	var page int64 = 1
 	for {
-		log.Debugf("[tencent-tcr.getImages] registryID=%s, namespace=%s, repo=%s, tag=%s, page=%d",
-			*a.registryID, namespace, repo, tag, page)
+		log.Debugf("[tencent-tcr.getImages] registryID=%s, namespace=%s, repo=%s, tag(s)=%d, page=%d",
+			*a.registryID, namespace, repo, len(imageNames), page)
 		req.Offset = &page
 		resp, err = a.tcrClient.DescribeImages(req)
 		if err != nil {
@@ -214,7 +240,7 @@ func (a *adapter) getImages(namespace, repo, tag string) (images []*tcr.TcrImage
 			imageNames = append(imageNames, *image.ImageVersion)
 		}
 
-		if len(images) == int(*resp.Response.TotalCount) {
+		if len(imageNames) == int(*resp.Response.TotalCount) {
 			break
 		}
 		page++

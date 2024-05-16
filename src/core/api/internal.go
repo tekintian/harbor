@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,13 +16,15 @@ package api
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib/config"
 
-	o "github.com/astaxie/beego/orm"
+	o "github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/quota"
+	"github.com/goharbor/harbor/src/controller/user"
+	"github.com/goharbor/harbor/src/core/auth"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
@@ -48,13 +50,14 @@ func (ia *InternalAPI) Prepare() {
 
 // RenameAdmin we don't provide flexibility in this API, as this is a workaround.
 func (ia *InternalAPI) RenameAdmin() {
-	if !dao.IsSuperUser(ia.SecurityCtx.GetUsername()) {
+	ctx := ia.Ctx.Request.Context()
+	if !auth.IsSuperUser(ctx, ia.SecurityCtx.GetUsername()) {
 		log.Errorf("User %s is not super user, not allow to rename admin.", ia.SecurityCtx.GetUsername())
 		ia.SendForbiddenError(errors.New(ia.SecurityCtx.GetUsername()))
 		return
 	}
 	newName := common.NewHarborAdminName
-	if err := dao.ChangeUserProfile(models.User{
+	if err := user.Ctl.UpdateProfile(ctx, &models.User{
 		UserID:   1,
 		Username: newName,
 	}, "username"); err != nil {
@@ -63,47 +66,16 @@ func (ia *InternalAPI) RenameAdmin() {
 		return
 	}
 	log.Debugf("The super user has been renamed to: %s", newName)
-	ia.DestroySession()
-}
-
-// QuotaSwitcher ...
-type QuotaSwitcher struct {
-	Enabled bool
-}
-
-// SwitchQuota ...
-func (ia *InternalAPI) SwitchQuota() {
-	var req QuotaSwitcher
-	if err := ia.DecodeJSONReq(&req); err != nil {
-		ia.SendBadRequestError(err)
+	if err := ia.DestroySession(); err != nil {
+		log.Errorf("failed to destroy session for admin user, error: %v", err)
 		return
 	}
-	ctx := orm.NewContext(ia.Ctx.Request.Context(), o.NewOrm())
-	cur := config.ReadOnly(ctx)
-	// quota per project from disable to enable, it needs to update the quota usage bases on the DB records.
-	if !config.QuotaPerProjectEnable(ctx) && req.Enabled {
-		if !cur {
-			config.GetCfgManager(ctx).Set(ctx, common.ReadOnly, true)
-			config.GetCfgManager(ctx).Save(ctx)
-		}
-		if err := quota.RefreshForProjects(ctx); err != nil {
-			ia.SendInternalServerError(err)
-			return
-		}
-	}
-	defer func() {
-		ctx := orm.Context()
-		config.GetCfgManager(ctx).Set(ctx, common.ReadOnly, cur)
-		config.GetCfgManager(ctx).Set(ctx, common.QuotaPerProjectEnable, req.Enabled)
-		config.GetCfgManager(ctx).Save(ctx)
-	}()
-	return
 }
 
 // SyncQuota ...
 func (ia *InternalAPI) SyncQuota() {
 	if !config.QuotaPerProjectEnable(orm.Context()) {
-		ia.SendError(errors.ForbiddenError(nil).WithMessage("quota per project is disabled"))
+		ia.SendError(errors.ForbiddenError(nil).WithMessage("quota per project is deactivated"))
 		return
 	}
 	ctx := orm.Context()
@@ -111,14 +83,20 @@ func (ia *InternalAPI) SyncQuota() {
 	cfgMgr := config.GetCfgManager(ctx)
 	if !cur {
 		cfgMgr.Set(ctx, common.ReadOnly, true)
-		cfgMgr.Save(ctx)
+		err := cfgMgr.Save(ctx)
+		if err != nil {
+			log.Warningf("failed to save context into config manager, error: %v", err)
+		}
 	}
 	// For api call, to avoid the timeout, it should be asynchronous
 	go func() {
 		defer func() {
 			ctx := orm.Context()
 			cfgMgr.Set(ctx, common.ReadOnly, cur)
-			cfgMgr.Save(ctx)
+			err := cfgMgr.Save(ctx)
+			if err != nil {
+				log.Warningf("failed to save context into config manager asynchronously, error: %v", err)
+			}
 		}()
 		log.Info("start to sync quota(API), the system will be set to ReadOnly and back it normal once it done.")
 		ctx := orm.NewContext(context.TODO(), o.NewOrm())
@@ -129,5 +107,4 @@ func (ia *InternalAPI) SyncQuota() {
 		}
 		log.Info("success to sync quota(API).")
 	}()
-	return
 }

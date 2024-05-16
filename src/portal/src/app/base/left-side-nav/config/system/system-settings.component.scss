@@ -1,3 +1,6 @@
+$input-width: 12rem;
+
+
 .subtitle {
   font-size: 14px;
   font-weight: 600;
@@ -6,27 +9,33 @@
 .clr-form-horizontal {
   .clr-form-control {
     & >.clr-control-label {
-      width: 12rem;
+      width: 15rem;
     }
   }
+
   .flex-direction-column {
     flex-direction: column;
   }
 }
+
 .bottom-line {
   display: flex;
   flex-direction: column-reverse;
 }
+
 .expire-data {
   min-width: 12.5rem;
   margin-top: -1rem;
 }
+
 .position-relative {
   position: relative;
 }
+
 .pl-05 {
   padding-left: 0.5rem;
 }
+
 .mt-1 {
   margin-top: 1rem;
 }
@@ -38,6 +47,7 @@
 .font-size-13 {
   font-size: 13px;
 }
+
 .mt-05 {
   margin-bottom: 0.5rem;
 }
@@ -57,6 +67,7 @@
   height: 224px;
   width: 222px;
   overflow-y: auto;
+
   li {
     height: 24px;
     line-height: 24px;
@@ -87,7 +98,7 @@
 .add-modal {
   position: absolute;
   padding: 0 8px;
-  background-color: rgb(238, 238, 238);
+  background-color: rgb(238 238 238);
 
   input {
     width: 100%;
@@ -98,20 +109,16 @@
     float: right;
   }
 }
+
 .hand{
   cursor: pointer;
   margin: 0;
 }
 
-.cert-down-label {
-  position: relative;
-  .cert-down {
-    position: absolute;
-      left: 240px;
-      top: 50%;
-      transform: translateY(-50%);
-  }
+.cert-down {
+  margin-top: 0.15rem;
 }
+
 .info-tips-icon {
   color: grey;
 }
@@ -133,6 +140,75 @@
 .replication-tooltip {
   top: -8px;
 }
+
 .margin-top-3px {
   margin-top: 3px;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+}
+
+.clr-input {
+  width: $input-width;
+}
+
+.pro-creation {
+  width: $input-width;
+}
+
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+/* Firefox */
+input[type=number] {
+  appearance: textfield;
+}
+
+.clr-textarea {
+  max-width: none;
+  width: $input-width;
+}
+
+.flex-baseline {
+  display: flex;
+  align-items: baseline;
+}
+
+$message-type-width: 12rem;
+
+.message-type {
+  margin-left: 2rem;
+  width: $message-type-width;
+}
+
+.message-label {
+  margin-right: 0.25rem;
+}
+
+.duration {
+  width: $input-width;
+  display: flex;
+  justify-content: right;
+}
+
+.flex {
+  display: flex;
+}
+
+:host::ng-deep clr-date-container{
+  margin-top: 0;
+  margin-left: 0.5rem;
+}
+
+.message-select {
+  width: 6.75rem;
+}
+
+.date {
+  width: 6rem;
 }

@@ -17,13 +17,14 @@ package models
 import (
 	"context"
 	"fmt"
-	"github.com/astaxie/beego/orm"
+	"strings"
+	"time"
+
+	"github.com/beego/beego/v2/client/orm"
 	"github.com/docker/distribution/manifest/manifestlist"
 	"github.com/docker/distribution/manifest/schema1"
 	"github.com/docker/distribution/manifest/schema2"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"strings"
-	"time"
 )
 
 func init() {
@@ -122,7 +123,7 @@ func (b *Blob) IsManifest() bool {
 }
 
 // FilterByArtifactDigest returns orm.QuerySeter with artifact digest filter
-func (b *Blob) FilterByArtifactDigest(ctx context.Context, qs orm.QuerySeter, key string, value interface{}) orm.QuerySeter {
+func (b *Blob) FilterByArtifactDigest(_ context.Context, qs orm.QuerySeter, _ string, value interface{}) orm.QuerySeter {
 	v, ok := value.(string)
 	if !ok {
 		return qs
@@ -132,7 +133,7 @@ func (b *Blob) FilterByArtifactDigest(ctx context.Context, qs orm.QuerySeter, ke
 }
 
 // FilterByArtifactDigests returns orm.QuerySeter with artifact digests filter
-func (b *Blob) FilterByArtifactDigests(ctx context.Context, qs orm.QuerySeter, key string, value interface{}) orm.QuerySeter {
+func (b *Blob) FilterByArtifactDigests(_ context.Context, qs orm.QuerySeter, _ string, value interface{}) orm.QuerySeter {
 	artifactDigests, ok := value.([]string)
 	if !ok {
 		return qs
@@ -147,7 +148,7 @@ func (b *Blob) FilterByArtifactDigests(ctx context.Context, qs orm.QuerySeter, k
 }
 
 // FilterByProjectID returns orm.QuerySeter with project id filter
-func (b *Blob) FilterByProjectID(ctx context.Context, qs orm.QuerySeter, key string, value interface{}) orm.QuerySeter {
+func (b *Blob) FilterByProjectID(_ context.Context, qs orm.QuerySeter, _ string, value interface{}) orm.QuerySeter {
 	projectID, ok := value.(int64)
 	if !ok {
 		return qs

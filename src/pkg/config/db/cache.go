@@ -1,26 +1,26 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package db
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/pkg/config/store"
 	"time"
 
 	"github.com/goharbor/harbor/src/lib/cache"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/config/store"
 )
 
 const cacheKey = "cfgs"
@@ -41,7 +41,7 @@ func (d *Cache) Load(ctx context.Context) (map[string]interface{}, error) {
 
 	// let the cache expired after one minute
 	// because the there no way to rollback the config items been saved when invalidate the cache failed
-	if err := cache.FetchOrSave(d.cache, cacheKey, &result, f, time.Minute); err != nil {
+	if err := cache.FetchOrSave(ctx, d.cache, cacheKey, &result, f, time.Minute); err != nil {
 		return nil, err
 	}
 
@@ -54,7 +54,7 @@ func (d *Cache) Save(ctx context.Context, cfg map[string]interface{}) error {
 		return err
 	}
 
-	if err := d.cache.Delete(cacheKey); err != nil {
+	if err := d.cache.Delete(ctx, cacheKey); err != nil {
 		log.Warningf("failed to invalidate the cache of the configurations immediately, error: %v", err)
 	}
 

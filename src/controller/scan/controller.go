@@ -18,14 +18,26 @@ import (
 	"context"
 
 	"github.com/goharbor/harbor/src/controller/artifact"
-	sca "github.com/goharbor/harbor/src/pkg/scan"
+	"github.com/goharbor/harbor/src/jobservice/job"
+	allowlist "github.com/goharbor/harbor/src/pkg/allowlist/models"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scan"
-	"github.com/goharbor/harbor/src/pkg/scan/report"
+	"github.com/goharbor/harbor/src/pkg/scan/vuln"
 )
 
+// Vulnerable ...
+type Vulnerable struct {
+	VulnerabilitiesCount int
+	ScanStatus           string
+	Severity             *vuln.Severity
+	CVEBypassed          []string
+}
+
+// IsScanSuccess returns true when the artifact scanned success
+func (v *Vulnerable) IsScanSuccess() bool {
+	return v.ScanStatus == job.SuccessStatus.String()
+}
+
 // Controller provides the related operations for triggering scan.
-// TODO: Here the artifact object is reused the v1 one which is sent to the adapter,
-//  it should be pointed to the general artifact object in future once it's ready.
 type Controller interface {
 	// Scan the given artifact
 	//
@@ -37,6 +49,17 @@ type Controller interface {
 	//   Returns:
 	//     error  : non nil error if any errors occurred
 	Scan(ctx context.Context, artifact *artifact.Artifact, options ...Option) error
+
+	// Stop scan job of the given artifact
+	//
+	//   Arguments:
+	//     ctx context.Context : the context for this method
+	//     artifact *artifact.Artifact : the artifact whose scan job to be stopped
+	//     capType string : the capability type of the scanner, vulnerability or SBOM.
+	//
+	//   Returns:
+	//     error  : non nil error if any errors occurred
+	Stop(ctx context.Context, artifact *artifact.Artifact, capType string) error
 
 	// GetReport gets the reports for the given artifact identified by the digest
 	//
@@ -56,12 +79,11 @@ type Controller interface {
 	//     ctx context.Context : the context for this method
 	//     artifact *artifact.Artifact    : the scanned artifact
 	//     mimeTypes []string       : the mime types of the reports
-	//     options ...report.Option : optional report options, specify if needed
 	//
 	//   Returns:
 	//     map[string]interface{} : report summaries indexed by mime types
 	//     error                  : non nil error if any errors occurred
-	GetSummary(ctx context.Context, artifact *artifact.Artifact, mimeTypes []string, options ...report.Option) (map[string]interface{}, error)
+	GetSummary(ctx context.Context, artifact *artifact.Artifact, mimeTypes []string) (map[string]interface{}, error)
 
 	// Get the scan log for the specified artifact with the given digest
 	//
@@ -72,7 +94,7 @@ type Controller interface {
 	//   Returns:
 	//     []byte : the log text stream
 	//     error  : non nil error if any errors occurred
-	GetScanLog(ctx context.Context, uuid string) ([]byte, error)
+	GetScanLog(ctx context.Context, art *artifact.Artifact, uuid string) ([]byte, error)
 
 	// Delete the reports related with the specified digests
 	//
@@ -82,16 +104,6 @@ type Controller interface {
 	//  Returns:
 	//    error        : non nil error if any errors occurred
 	DeleteReports(ctx context.Context, digests ...string) error
-
-	// UpdateReport update the report
-	//
-	//   Arguments:
-	//     ctx context.Context : the context for this method
-	//     report *sca.CheckInReport : the scan report
-	//
-	//   Returns:
-	//     error  : non nil error if any errors occurred
-	UpdateReport(ctx context.Context, report *sca.CheckInReport) error
 
 	// Scan all the artifacts
 	//
@@ -103,4 +115,27 @@ type Controller interface {
 	//   Returns:
 	//     error  : non nil error if any errors occurred
 	ScanAll(ctx context.Context, trigger string, async bool) (int64, error)
+
+	// StopScanAll stops the scanAll
+	//
+	//   Arguments:
+	//     ctx context.Context : the context for this method
+	//     executionID int64   : the id of scan all execution
+	//     async bool          : stop scan all in background
+	//   Returns:
+	//     error  : non nil error if any errors occurred
+	StopScanAll(ctx context.Context, executionID int64, async bool) error
+
+	// GetVulnerable returns the vulnerable of the artifact for the allowlist
+	//
+	//   Arguments:
+	//     ctx context.Context : the context for this method
+	//     artifact *artifact.Artifact : artifact to be scanned
+	//     allowlist map[string]struct{} : the set of CVE id of the items in the allowlist
+	//     allowlistIsExpired bool : whether the allowlist is expired
+	//
+	//   Returns
+	//      *Vulnerable : the vulnerable
+	//     error        : non nil error if any errors occurred
+	GetVulnerable(ctx context.Context, artifact *artifact.Artifact, allowlist allowlist.CVESet, allowlistIsExpired bool) (*Vulnerable, error)
 }

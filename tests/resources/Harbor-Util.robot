@@ -38,35 +38,35 @@ Install Harbor to Test Server
     Generate Certificate Authority For Chrome
 
 Up Harbor
-    [Arguments]  ${with_notary}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  make start -e NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum}
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  make start
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
 
 Down Harbor
-    [Arguments]  ${with_notary}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  echo "Y" | make down -e NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum}
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  echo "Y" | make down
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
 
 Package Harbor Offline
-    [Arguments]  ${with_notary}=true  ${with_chartmuseum}=true  ${with_trivy}=true
+    [Arguments]  ${with_trivy}=true
     Log To Console  \nStart Docker Daemon
     Start Docker Daemon Locally
-    Log To Console  make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=%{Harbor_Build_Base_Tag} NPM_REGISTRY=%{NPM_REGISTRY} VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum} TRIVYFLAG=${with_trivy} HTTPPROXY=
-    ${rc}  ${output}=  Run And Return Rc And Output  make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=%{Harbor_Build_Base_Tag} NPM_REGISTRY=%{NPM_REGISTRY} VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    Log To Console  make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=%{Harbor_Build_Base_Tag} NPM_REGISTRY=%{NPM_REGISTRY} VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    ${rc}  ${output}=  Run And Return Rc And Output  make package_offline GOBUILDTAGS="include_oss include_gcs" BASEIMAGETAG=%{Harbor_Build_Base_Tag} NPM_REGISTRY=%{NPM_REGISTRY} VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
     Log To Console  ${rc}
     Log To Console  ${output}
     Should Be Equal As Integers  ${rc}  0
 
 Package Harbor Online
-    [Arguments]  ${with_notary}=true  ${with_chartmuseum}=true  ${with_trivy}=true
+    [Arguments]  ${with_trivy}=true
     Log To Console  \nStart Docker Daemon
     Start Docker Daemon Locally
-    Log To Console  \nmake package_online GOBUILDTAGS="include_oss include_gcs"  VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum} TRIVYFLAG=${with_trivy} HTTPPROXY=
-    ${rc}  ${output}=  Run And Return Rc And Output  make package_online GOBUILDTAGS="include_oss include_gcs" VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    Log To Console  \nmake package_online GOBUILDTAGS="include_oss include_gcs"  VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
+    ${rc}  ${output}=  Run And Return Rc And Output  make package_online GOBUILDTAGS="include_oss include_gcs" VERSIONTAG=%{Harbor_Assets_Version} PKGVERSIONTAG=%{Harbor_Package_Version} TRIVYFLAG=${with_trivy} HTTPPROXY=
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
@@ -93,6 +93,7 @@ Switch To LDAP
 Get Harbor CA
     [Arguments]  ${ip}  ${cert}
     Log All  Start to get harbor ca: ${ip} ${cert}
+    #In API E2E engine, store cert in path "/ca"
     Run Keyword If  '${http_get_ca}' == 'false'  Run Keywords
     ...  Wait Unitl Command Success  cp /ca/harbor_ca.crt ${cert}
     ...  AND  Return From Keyword
@@ -102,30 +103,9 @@ Get Harbor CA
     Log All  ${output}
     Should Be Equal As Integers  ${rc}  0
 
-Enable Notary Client
-    ${rc}  ${output}=  Run And Return Rc And Output  rm -rf ~/.docker/
-    Log  ${rc}
-    ${rc}  ${output}=  Run And Return Rc and Output  curl -o /notary_ca.crt -s -k -X GET -u 'admin:Harbor12345' 'https://${ip}/api/v2.0/systeminfo/getcert'
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
-
-Notary Remove Signature
-    [Arguments]  ${ip}  ${project}  ${image}  ${tag}  ${user}  ${pwd}
-    ${rc}  ${output}=  Run And Return Rc And Output  ./tests/robot-cases/Group0-Util/notary-util.sh remove ${ip} ${project} ${image} ${tag} ${notaryServerEndpoint} ${user} ${pwd}
-    Log To Console  ${output}
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
-
-Notary Key Rotate
-    [Arguments]  ${ip}  ${project}  ${image}  ${tag}  ${user}  ${pwd}
-    ${rc}  ${output}=  Run And Return Rc And Output  ./tests/robot-cases/Group0-Util/notary-util.sh key_rotate ${ip} ${project} ${image} ${tag} ${notaryServerEndpoint} ${user} ${pwd}
-    Log To Console  ${output}
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
-
 Prepare
-    [Arguments]  ${with_notary}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  make prepare -e NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum}
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  make prepare
     Log  ${rc}
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
@@ -158,8 +138,8 @@ Prepare Cert
     Should Be Equal As Integers  ${rc}  0
 
 Compile and Up Harbor With Source Code
-    [Arguments]  ${with_notary}=true  ${with_chartmuseum}=true
-    ${rc}  ${output}=  Run And Return Rc And Output  make install swagger_client NOTARYFLAG=${with_notary} CHARTFLAG=${with_chartmuseum} HTTPPROXY=
+    [Arguments]
+    ${rc}  ${output}=  Run And Return Rc And Output  make install swagger_client HTTPPROXY=
     Log  ${output}
     Should Be Equal As Integers  ${rc}  0
     Sleep  20

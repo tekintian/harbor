@@ -15,6 +15,12 @@
 package authproxy
 
 import (
+	"net/http/httptest"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/models"
@@ -25,12 +31,9 @@ import (
 	cfgModels "github.com/goharbor/harbor/src/lib/config/models"
 	"github.com/goharbor/harbor/src/lib/orm"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
+	"github.com/goharbor/harbor/src/pkg/user"
 	"github.com/goharbor/harbor/src/pkg/usergroup"
 	"github.com/goharbor/harbor/src/pkg/usergroup/model"
-	"github.com/stretchr/testify/assert"
-	"net/http/httptest"
-	"os"
-	"testing"
 )
 
 var mockSvr *httptest.Server
@@ -48,6 +51,7 @@ func TestMain(m *testing.M) {
 	a = &Auth{
 		Endpoint:            mockSvr.URL + "/test/login",
 		TokenReviewEndpoint: mockSvr.URL + "/test/tokenreview",
+		userMgr:             user.New(),
 	}
 	cfgMap := cut.GetUnitTestConfig()
 	conf := map[string]interface{}{
@@ -136,7 +140,7 @@ func TestAuth_Authenticate(t *testing.T) {
 	}
 	assert := assert.New(t)
 	for _, c := range suite {
-		r, e := a.Authenticate(c.input)
+		r, e := a.Authenticate(orm.Context(), c.input)
 		if c.expect.err == nil {
 			assert.Nil(e)
 			assert.Equal(c.expect.user, *r)
@@ -182,7 +186,7 @@ func TestAuth_PostAuthenticate(t *testing.T) {
 		},
 	}
 	for _, c := range suite {
-		a.PostAuthenticate(c.input)
+		a.PostAuthenticate(orm.Context(), c.input)
 		assert.Equal(t, c.expect.Username, c.input.Username)
 		assert.Equal(t, c.expect.Email, c.input.Email)
 		assert.Equal(t, c.expect.Realname, c.input.Realname)
@@ -196,7 +200,7 @@ func TestAuth_OnBoardGroup(t *testing.T) {
 		GroupName: "OnBoardTest",
 		GroupType: common.HTTPGroupType,
 	}
-	a.OnBoardGroup(input, "")
+	a.OnBoardGroup(orm.Context(), input, "")
 
 	assert.True(t, input.ID > 0, "The OnBoardGroup should have a valid group ID")
 	g, er := usergroup.Mgr.Get(orm.Context(), input.ID)
@@ -204,7 +208,7 @@ func TestAuth_OnBoardGroup(t *testing.T) {
 	assert.Equal(t, "OnBoardTest", g.GroupName)
 
 	emptyGroup := &model.UserGroup{}
-	err := a.OnBoardGroup(emptyGroup, "")
+	err := a.OnBoardGroup(orm.Context(), emptyGroup, "")
 	if err == nil {
 		t.Fatal("Empty user group should failed to OnBoard")
 	}

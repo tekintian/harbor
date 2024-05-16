@@ -16,24 +16,26 @@ package quota
 
 import (
 	"context"
-	common_dao "github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/controller/event"
-	"github.com/goharbor/harbor/src/lib/config"
-	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
-	policy_model "github.com/goharbor/harbor/src/pkg/notification/policy/model"
-	"github.com/goharbor/harbor/src/testing/mock"
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/pkg/notification"
-	"github.com/goharbor/harbor/src/pkg/notification/policy"
-	"github.com/goharbor/harbor/src/pkg/notifier"
-	"github.com/goharbor/harbor/src/pkg/notifier/model"
-	testing_notification "github.com/goharbor/harbor/src/testing/pkg/notification/policy"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/common"
+	common_dao "github.com/goharbor/harbor/src/common/dao"
+	"github.com/goharbor/harbor/src/controller/event"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/orm"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
+	"github.com/goharbor/harbor/src/pkg/notification"
+	"github.com/goharbor/harbor/src/pkg/notification/policy"
+	policy_model "github.com/goharbor/harbor/src/pkg/notification/policy/model"
+	"github.com/goharbor/harbor/src/pkg/notifier"
+	"github.com/goharbor/harbor/src/pkg/notifier/model"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	"github.com/goharbor/harbor/src/testing/mock"
+	testing_notification "github.com/goharbor/harbor/src/testing/pkg/notification/policy"
 )
 
 // QuotaPreprocessHandlerSuite ...
@@ -65,7 +67,7 @@ func (suite *QuotaPreprocessHandlerSuite) SetupSuite() {
 		OccurAt:   time.Now().UTC(),
 		RepoName:  "hello-world",
 		Resource:  res,
-		Project: &models.Project{
+		Project: &proModels.Project{
 			ProjectID: 1,
 			Name:      "library",
 		},
@@ -95,7 +97,7 @@ func (suite *QuotaPreprocessHandlerSuite) TearDownSuite() {
 // TestHandle ...
 func (suite *QuotaPreprocessHandlerSuite) TestHandle() {
 	handler := &Handler{}
-	err := handler.Handle(context.TODO(), suite.evt)
+	err := handler.Handle(orm.Context(), suite.evt)
 	suite.NoError(err)
 }
 

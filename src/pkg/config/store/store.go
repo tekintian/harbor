@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package store is only used in the internal implement of manager, not a public api.
 package store
 
@@ -6,12 +20,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/goharbor/harbor/src/common/utils"
-	"github.com/goharbor/harbor/src/lib/config/metadata"
-	"github.com/goharbor/harbor/src/lib/log"
 	"reflect"
 	"strconv"
 	"sync"
+
+	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib/config/metadata"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // ConfigStore - the config data store
@@ -112,7 +127,10 @@ func (c *ConfigStore) Update(ctx context.Context, cfgMap map[string]interface{})
 			delete(cfgMap, key)
 			continue
 		}
-		c.Set(key, *configValue)
+		if err := c.Set(key, *configValue); err != nil {
+			log.Warningf("failed to update configure item, key=%s, error: %v", key, err)
+			continue
+		}
 	}
 	// Update to driver
 	return c.cfgDriver.Save(ctx, cfgMap)

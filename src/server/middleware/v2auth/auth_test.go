@@ -17,9 +17,6 @@ package v2auth
 import (
 	"context"
 	"fmt"
-	testutils "github.com/goharbor/harbor/src/common/utils/test"
-	"github.com/goharbor/harbor/src/lib/config"
-
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,18 +24,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/common/security"
+	testutils "github.com/goharbor/harbor/src/common/utils/test"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	securitytesting "github.com/goharbor/harbor/src/testing/common/security"
 	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestMain(m *testing.M) {
@@ -46,20 +46,20 @@ func TestMain(m *testing.M) {
 	ctl := &projecttesting.Controller{}
 
 	mockGet := func(ctx context.Context,
-		projectIDOrName interface{}, options ...project.Option) (*models.Project, error) {
+		projectIDOrName interface{}, options ...project.Option) (*proModels.Project, error) {
 		name := projectIDOrName.(string)
 		id, _ := strconv.Atoi(strings.TrimPrefix(name, "project_"))
 		if id == 0 {
 			return nil, fmt.Errorf("%s not found", name)
 		}
-		return &models.Project{
+		return &proModels.Project{
 			ProjectID: int64(id),
 			Name:      name,
 		}, nil
 	}
 	mock.OnAnything(ctl, "Get").Return(
 		func(ctx context.Context,
-			projectIDOrName interface{}, options ...project.Option) *models.Project {
+			projectIDOrName interface{}, options ...project.Option) *proModels.Project {
 			p, _ := mockGet(ctx, projectIDOrName, options...)
 			return p
 		},
@@ -162,6 +162,7 @@ func TestMiddleware(t *testing.T) {
 	req4, _ := http.NewRequest(http.MethodPost, "/v2/project_1/ubuntu/blobs/uploads/mount=?mount=sha256:08e4a417ff4e3913d8723a05cc34055db01c2fd165b588e049c5bad16ce6094f&from=project_2/ubuntu", nil)
 	req5, _ := http.NewRequest(http.MethodPost, "/v2/project_1/ubuntu/blobs/uploads/mount=?mount=sha256:08e4a417ff4e3913d8723a05cc34055db01c2fd165b588e049c5bad16ce6094f&from=project_3/ubuntu", nil)
 	req6, _ := http.NewRequest(http.MethodPost, "/v2/project_1/ubuntu/blobs/uploads/mount=?mount=sha256:08e4a417ff4e3913d8723a05cc34055db01c2fd165b588e049c5bad16ce6094f&from=project_0/ubuntu", nil)
+	req7, _ := http.NewRequest(http.MethodPost, "/v2/uploads/mount=?mount=sha256:08e4a417ff4e3913d8723a05cc34055db01c2fd165b588e049c5bad16ce6094f&from=project_0/ubuntu", nil)
 
 	cases := []struct {
 		input  *http.Request
@@ -205,6 +206,10 @@ func TestMiddleware(t *testing.T) {
 		},
 		{
 			input:  req6.WithContext(ctx5),
+			status: http.StatusUnauthorized,
+		},
+		{
+			input:  req7.WithContext(ctx5),
 			status: http.StatusUnauthorized,
 		},
 	}

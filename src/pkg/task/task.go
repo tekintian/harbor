@@ -18,12 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
 	"time"
 
 	cjob "github.com/goharbor/harbor/src/common/job"
 	"github.com/goharbor/harbor/src/common/job/models"
 	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/task/dao"
@@ -53,9 +53,20 @@ type Manager interface {
 	UpdateExtraAttrs(ctx context.Context, id int64, extraAttrs map[string]interface{}) (err error)
 	// Get the log of the specified task
 	GetLog(ctx context.Context, id int64) (log []byte, err error)
+	// GetLogByJobID get the log of specified job id
+	GetLogByJobID(ctx context.Context, jobID string) (log []byte, err error)
 	// Count counts total of tasks according to the query.
 	// Query the "ExtraAttrs" by setting 'query.Keywords["ExtraAttrs.key"]="value"'
 	Count(ctx context.Context, query *q.Query) (int64, error)
+	// Update the status of the specified task
+	Update(ctx context.Context, task *Task, props ...string) error
+	// UpdateStatusInBatch updates the status of tasks in batch
+	UpdateStatusInBatch(ctx context.Context, jobIDs []string, status string, batchSize int) error
+	// ExecutionIDsByVendorAndStatus retrieve execution id by vendor type and status
+	ExecutionIDsByVendorAndStatus(ctx context.Context, vendorType, status string) ([]int64, error)
+	// ListScanTasksByReportUUID lists scan tasks by report uuid, although it's a specific case but it will be
+	// more suitable to support multi database in the future.
+	ListScanTasksByReportUUID(ctx context.Context, uuid string) (tasks []*Task, err error)
 }
 
 // NewManager creates an instance of the default task manager
@@ -73,6 +84,13 @@ type manager struct {
 	execDAO  dao.ExecutionDAO
 	jsClient cjob.Client
 	coreURL  string
+}
+
+func (m *manager) Update(ctx context.Context, task *Task, props ...string) error {
+	return m.dao.Update(ctx, &dao.Task{
+		ID:     task.ID,
+		Status: task.Status,
+	}, props...)
 }
 
 func (m *manager) Count(ctx context.Context, query *q.Query) (int64, error) {
@@ -95,6 +113,7 @@ func (m *manager) Create(ctx context.Context, executionID int64, jb *Job, extraA
 	jobID, err := m.submitJob(ctx, id, jb)
 	if err != nil {
 		// failed to submit job to jobservice, delete the task record
+		log.Errorf("delete task %d from db due to failed to submit job %v, error: %v", id, jb.Name, err)
 		if err := m.dao.Delete(ctx, id); err != nil {
 			log.Errorf("failed to delete the task %d: %v", id, err)
 		}
@@ -140,7 +159,7 @@ func (m *manager) createTaskRecord(ctx context.Context, executionID int64, extra
 	})
 }
 
-func (m *manager) submitJob(ctx context.Context, id int64, jb *Job) (string, error) {
+func (m *manager) submitJob(_ context.Context, id int64, jb *Job) (string, error) {
 	jobData := &models.JobData{
 		Name:       jb.Name,
 		StatusHook: fmt.Sprintf("%s/service/notifications/tasks/%d", m.coreURL, id),
@@ -218,6 +237,20 @@ func (m *manager) List(ctx context.Context, query *q.Query) ([]*Task, error) {
 	return ts, nil
 }
 
+func (m *manager) ListScanTasksByReportUUID(ctx context.Context, uuid string) ([]*Task, error) {
+	tasks, err := m.dao.ListScanTasksByReportUUID(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	var ts []*Task
+	for _, task := range tasks {
+		t := &Task{}
+		t.From(task)
+		ts = append(ts, t)
+	}
+	return ts, nil
+}
+
 func (m *manager) UpdateExtraAttrs(ctx context.Context, id int64, extraAttrs map[string]interface{}) error {
 	data, err := json.Marshal(extraAttrs)
 	if err != nil {
@@ -236,4 +269,16 @@ func (m *manager) GetLog(ctx context.Context, id int64) ([]byte, error) {
 		return nil, err
 	}
 	return m.jsClient.GetJobLog(task.JobID)
+}
+
+func (m *manager) UpdateStatusInBatch(ctx context.Context, jobIDs []string, status string, batchSize int) error {
+	return m.dao.UpdateStatusInBatch(ctx, jobIDs, status, batchSize)
+}
+
+func (m *manager) ExecutionIDsByVendorAndStatus(ctx context.Context, vendorType, status string) ([]int64, error) {
+	return m.dao.ExecutionIDsByVendorAndStatus(ctx, vendorType, status)
+}
+
+func (m *manager) GetLogByJobID(_ context.Context, jobID string) (log []byte, err error) {
+	return m.jsClient.GetJobLog(jobID)
 }

@@ -1,8 +1,8 @@
 diff --git a/configuration/configuration.go b/configuration/configuration.go
-index b347d63b..04cdd230 100644
+index 7076df85d4..3e74330321 100644
 --- a/configuration/configuration.go
 +++ b/configuration/configuration.go
-@@ -162,6 +162,9 @@ type Configuration struct {
+@@ -168,6 +168,9 @@ type Configuration struct {
  		// Addr specifies the the redis instance available to the application.
  		Addr string `yaml:"addr,omitempty"`
  
@@ -13,36 +13,26 @@ index b347d63b..04cdd230 100644
  		Password string `yaml:"password,omitempty"`
  
 diff --git a/registry/handlers/app.go b/registry/handlers/app.go
-index 978851bb..a8379071 100644
+index bf56cea22a..4a7cee9a2e 100644
 --- a/registry/handlers/app.go
 +++ b/registry/handlers/app.go
 @@ -3,6 +3,7 @@ package handlers
  import (
  	"context"
- 	cryptorand "crypto/rand"
+ 	"crypto/rand"
 +	"errors"
  	"expvar"
  	"fmt"
- 	"math/rand"
-@@ -15,6 +16,8 @@ import (
+ 	"math"
+@@ -16,6 +17,7 @@ import (
  	"strings"
  	"time"
  
 +	"github.com/FZambia/sentinel"
-+
+ 	"github.com/distribution/reference"
  	"github.com/docker/distribution"
  	"github.com/docker/distribution/configuration"
- 	dcontext "github.com/docker/distribution/context"
-@@ -24,7 +27,7 @@ import (
- 	"github.com/docker/distribution/notifications"
- 	"github.com/docker/distribution/reference"
- 	"github.com/docker/distribution/registry/api/errcode"
--	"github.com/docker/distribution/registry/api/v2"
-+	v2 "github.com/docker/distribution/registry/api/v2"
- 	"github.com/docker/distribution/registry/auth"
- 	registrymiddleware "github.com/docker/distribution/registry/middleware/registry"
- 	repositorymiddleware "github.com/docker/distribution/registry/middleware/repository"
-@@ -498,6 +501,44 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
+@@ -499,6 +501,45 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
  		return
  	}
  
@@ -84,10 +74,11 @@ index 978851bb..a8379071 100644
 +			return err
 +		}
 +	}
++
  	pool := &redis.Pool{
  		Dial: func() (redis.Conn, error) {
  			// TODO(stevvooe): Yet another use case for contextual timing.
-@@ -513,8 +554,11 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
+@@ -514,8 +555,11 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
  				}
  			}
  
@@ -101,7 +92,7 @@ index 978851bb..a8379071 100644
  				configuration.Redis.DialTimeout,
  				configuration.Redis.ReadTimeout,
  				configuration.Redis.WriteTimeout)
-@@ -546,16 +590,11 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
+@@ -547,16 +591,11 @@ func (app *App) configureRedis(configuration *configuration.Configuration) {
  			done(nil)
  			return conn, nil
  		},
@@ -124,18 +115,9 @@ index 978851bb..a8379071 100644
  
  	app.redis = pool
 diff --git a/registry/handlers/app_test.go b/registry/handlers/app_test.go
-index 12c0b61c..8a644d83 100644
+index 60a57e6c15..8a644d83d8 100644
 --- a/registry/handlers/app_test.go
 +++ b/registry/handlers/app_test.go
-@@ -11,7 +11,7 @@ import (
- 	"github.com/docker/distribution/configuration"
- 	"github.com/docker/distribution/context"
- 	"github.com/docker/distribution/registry/api/errcode"
--	"github.com/docker/distribution/registry/api/v2"
-+	v2 "github.com/docker/distribution/registry/api/v2"
- 	"github.com/docker/distribution/registry/auth"
- 	_ "github.com/docker/distribution/registry/auth/silly"
- 	"github.com/docker/distribution/registry/storage"
 @@ -140,7 +140,29 @@ func TestAppDispatcher(t *testing.T) {
  // TestNewApp covers the creation of an application via NewApp with a
  // configuration.
@@ -207,17 +189,17 @@ index 12c0b61c..8a644d83 100644
  	// ensuring that NewApp doesn't panic. We might want to tweak this
  	// behavior.
 diff --git a/vendor.conf b/vendor.conf
-index a249caf2..fcc9fee2 100644
+index 33fe616b76..a8d8f58bc6 100644
 --- a/vendor.conf
 +++ b/vendor.conf
-@@ -49,3 +49,4 @@ gopkg.in/yaml.v2 v2.2.1
+@@ -51,3 +51,4 @@ gopkg.in/yaml.v2 v2.2.1
  rsc.io/letsencrypt e770c10b0f1a64775ae91d240407ce00d1a5bdeb https://github.com/dmcgowan/letsencrypt.git
- github.com/opencontainers/go-digest a6d0ee40d4207ea02364bd3b9e8e77b9159ba1eb
- github.com/opencontainers/image-spec ab7389ef9f50030c9b245bc16b981c7ddf192882
+ github.com/opencontainers/go-digest ea51bea511f75cfa3ef6098cc253c5c3609b037a # v1.0.0
+ github.com/opencontainers/image-spec 67d2d5658fe0476ab9bf414cec164077ebff3920 # v1.0.2
 +github.com/FZambia/sentinel 5585739eb4b6478aa30161866ccf9ce0ef5847c7 https://github.com/jeremyxu2010/sentinel.git
 diff --git a/vendor/github.com/FZambia/sentinel/LICENSE b/vendor/github.com/FZambia/sentinel/LICENSE
 new file mode 100644
-index 00000000..8dada3ed
+index 0000000000..8dada3edaf
 --- /dev/null
 +++ b/vendor/github.com/FZambia/sentinel/LICENSE
 @@ -0,0 +1,201 @@
@@ -424,7 +406,7 @@ index 00000000..8dada3ed
 +   limitations under the License.
 diff --git a/vendor/github.com/FZambia/sentinel/README.md b/vendor/github.com/FZambia/sentinel/README.md
 new file mode 100644
-index 00000000..f544c54e
+index 0000000000..f544c54ef6
 --- /dev/null
 +++ b/vendor/github.com/FZambia/sentinel/README.md
 @@ -0,0 +1,39 @@
@@ -469,7 +451,7 @@ index 00000000..f544c54e
 +Library is available under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.html). 
 diff --git a/vendor/github.com/FZambia/sentinel/sentinel.go b/vendor/github.com/FZambia/sentinel/sentinel.go
 new file mode 100644
-index 00000000..79209e9f
+index 0000000000..79209e9f0d
 --- /dev/null
 +++ b/vendor/github.com/FZambia/sentinel/sentinel.go
 @@ -0,0 +1,426 @@

@@ -22,8 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	car "github.com/goharbor/harbor/src/controller/artifact"
+	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib/selector"
 	models2 "github.com/goharbor/harbor/src/pkg/allowlist/models"
@@ -33,18 +36,16 @@ import (
 	pr "github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider/auth"
-	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/scan/vuln"
 	ta "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 	"github.com/goharbor/harbor/src/testing/controller/artifact"
 	"github.com/goharbor/harbor/src/testing/controller/project"
-	"github.com/goharbor/harbor/src/testing/controller/scan"
+	scantesting "github.com/goharbor/harbor/src/testing/controller/scan"
 	"github.com/goharbor/harbor/src/testing/mock"
 	"github.com/goharbor/harbor/src/testing/pkg/p2p/preheat/instance"
 	"github.com/goharbor/harbor/src/testing/pkg/p2p/preheat/policy"
 	"github.com/goharbor/harbor/src/testing/pkg/task"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 // EnforcerTestSuite is a test suite of testing preheat enforcer
@@ -104,13 +105,14 @@ func (suite *EnforcerTestSuite) SetupSuite() {
 		mock.AnythingOfType("*artifact.Option"),
 	).Return(mockArtifacts(), nil)
 
-	fakeScanCtl := &scan.Controller{}
-	fakeScanCtl.On("GetSummary",
+	low := vuln.Low
+	fakeScanCtl := &scantesting.Controller{}
+	fakeScanCtl.On("GetVulnerable",
 		context.TODO(),
 		mock.AnythingOfType("*artifact.Artifact"),
-		[]string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport},
-		mock.AnythingOfType("report.Option"),
-	).Return(mockVulnerabilitySummary(), nil)
+		mock.AnythingOfType("models.CVESet"),
+		mock.AnythingOfType("bool"),
+	).Return(&scan.Vulnerable{Severity: &low, ScanStatus: "Success"}, nil)
 
 	fakeProCtl := &project.Controller{}
 	fakeProCtl.On("Get",
@@ -118,12 +120,11 @@ func (suite *EnforcerTestSuite) SetupSuite() {
 		(int64)(1),
 		mock.Anything,
 		mock.Anything,
-	).Return(&models.Project{
+	).Return(&proModels.Project{
 		ProjectID:    1,
 		Name:         "library",
 		CVEAllowlist: models2.CVEAllowlist{},
 		Metadata: map[string]string{
-			proMetaKeyContentTrust:  "true",
 			proMetaKeyVulnerability: "true",
 			proMetaKeySeverity:      "high",
 		},
@@ -155,7 +156,7 @@ func (suite *EnforcerTestSuite) SetupSuite() {
 			r := fmt.Sprintf("%s/%s", c.Namespace, c.Repository)
 			return fmt.Sprintf(manifestAPIPattern, "https://testing.harbor.com", r, c.Tags[0]), nil
 		},
-		credMaker: func(c *selector.Candidate) (s string, e error) {
+		credMaker: func(ctx context.Context, c *selector.Candidate) (s string, e error) {
 			return "fake-token", nil
 		},
 	}
@@ -258,12 +259,10 @@ func mockArtifacts() []*car.Artifact {
 					Tag: ta.Tag{
 						Name: "prod",
 					},
-					Signed: true,
 				}, {
 					Tag: ta.Tag{
 						Name: "stage",
 					},
-					Signed: false,
 				},
 			},
 			Labels: []*model.Label{
@@ -286,12 +285,10 @@ func mockArtifacts() []*car.Artifact {
 					Tag: ta.Tag{
 						Name: "latest",
 					},
-					Signed: true,
 				}, {
 					Tag: ta.Tag{
 						Name: "stage",
 					},
-					Signed: true,
 				},
 			},
 			Labels: []*model.Label{
@@ -301,19 +298,6 @@ func mockArtifacts() []*car.Artifact {
 					Name: "staged",
 				},
 			},
-		},
-	}
-}
-
-// mock vulnerability summary
-func mockVulnerabilitySummary() map[string]interface{} {
-	// skip all unused properties
-	return map[string]interface{}{
-		v1.MimeTypeNativeReport: &vuln.NativeReportSummary{
-			Severity: vuln.Low,
-		},
-		v1.MimeTypeGenericVulnerabilityReport: &vuln.NativeReportSummary{
-			Severity: vuln.Low,
 		},
 	}
 }

@@ -13,135 +13,87 @@
 // limitations under the License.
 import { Component, Input, OnInit, OnDestroy, ElementRef } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
-import { Subscription } from "rxjs";
+import { Subscription } from 'rxjs';
 import { TranslateService } from '@ngx-translate/core';
 import { Message } from './message';
 import { MessageService } from './message.service';
-import { CommonRoutes, dismissInterval, httpStatusCode } from "../../entities/shared.const";
-import { delUrlParam } from "../../units/utils";
-import { UN_LOGGED_PARAM } from "../../../account/sign-in/sign-in.service";
+import { dismissInterval } from '../../entities/shared.const';
 
-const YES: string = 'yes';
 @Component({
-  selector: 'global-message',
-  templateUrl: 'message.component.html',
-  styleUrls: ['message.component.scss']
+    selector: 'global-message',
+    templateUrl: 'message.component.html',
+    styleUrls: ['message.component.scss'],
 })
 export class MessageComponent implements OnInit, OnDestroy {
+    globalMessage: Message = new Message();
+    globalMessageOpened: boolean = false;
+    messageText: string = '';
+    timer: any = null;
+    msgSub: Subscription;
+    constructor(
+        private elementRef: ElementRef,
+        private messageService: MessageService,
+        private router: Router,
+        private route: ActivatedRoute,
+        private translate: TranslateService
+    ) {}
 
-  @Input() isAppLevel: boolean;
-  globalMessage: Message = new Message();
-  globalMessageOpened: boolean;
-  messageText: string = "";
-  timer: any = null;
-
-  appLevelMsgSub: Subscription;
-  msgSub: Subscription;
-  clearSub: Subscription;
-
-  constructor(
-    private elementRef: ElementRef,
-    private messageService: MessageService,
-    private router: Router,
-    private route: ActivatedRoute,
-    private translate: TranslateService) { }
-
-  ngOnInit(): void {
-    // Only subscribe application level message
-    if (this.isAppLevel) {
-      this.appLevelMsgSub = this.messageService.appLevelAnnounced$.subscribe(
-        message => {
-          this.globalMessageOpened = true;
-          this.globalMessage = message;
-          this.messageText = message.message;
-
-          this.translateMessage(message);
+    ngOnInit(): void {
+        if (!this.msgSub) {
+            this.msgSub = this.messageService.messageAnnounced$.subscribe(
+                message => {
+                    this.globalMessageOpened = true;
+                    this.globalMessage = message;
+                    this.messageText = message.message;
+                    this.translateMessage(message);
+                    // Make the message alert bar dismiss after several intervals.
+                    // Only for this case
+                    if (this.timer) {
+                        clearTimeout(this.timer);
+                        this.timer = null;
+                    }
+                    this.timer = setTimeout(
+                        () => this.onClose(),
+                        dismissInterval
+                    );
+                }
+            );
         }
-      );
-    } else {
-      // Only subscribe general messages
-      this.msgSub = this.messageService.messageAnnounced$.subscribe(
-        message => {
-          this.globalMessageOpened = true;
-          this.globalMessage = message;
-          this.messageText = message.message;
+    }
 
-          this.translateMessage(message);
+    ngOnDestroy() {
+        if (this.msgSub) {
+            this.msgSub.unsubscribe();
+            this.msgSub = null;
+        }
+    }
 
-          // Make the message alert bar dismiss after several intervals.
-          // Only for this case
-          this.timer = setTimeout(() => this.onClose(), dismissInterval);
-
-          // Hack the Clarity Alert style with native dom
-          setTimeout(() => {
-            let nativeDom: any = this.elementRef.nativeElement;
-            let queryDoms: any[] = nativeDom.getElementsByClassName("alert");
-            if (queryDoms && queryDoms.length > 0) {
-              let hackDom: any = queryDoms[0];
-              hackDom.className += ' alert-global alert-global-align';
+    // Translate or refactor the message shown to user
+    translateMessage(msg: Message): void {
+        let key = 'UNKNOWN_ERROR',
+            param = '';
+        if (msg && msg.message) {
+            key =
+                typeof msg.message === 'string'
+                    ? msg.message.trim()
+                    : msg.message;
+            if (key === '') {
+                key = 'UNKNOWN_ERROR';
             }
-          }, 0);
-
         }
-      );
+
+        this.translate
+            .get(key, { param: param })
+            .subscribe((res: string) => (this.messageText = res));
     }
-
-    this.clearSub = this.messageService.clearChan$.subscribe(clear => {
-      this.onClose();
-    });
-  }
-
-  ngOnDestroy() {
-    if (this.appLevelMsgSub) {
-      this.appLevelMsgSub.unsubscribe();
+    // Show message text
+    public get message(): string {
+        return this.messageText;
     }
-
-    if (this.msgSub) {
-      this.msgSub.unsubscribe();
+    onClose() {
+        if (this.timer) {
+            clearTimeout(this.timer);
+        }
+        this.globalMessageOpened = false;
     }
-
-    if (this.clearSub) {
-      this.clearSub.unsubscribe();
-    }
-  }
-
-  // Translate or refactor the message shown to user
-  translateMessage(msg: Message): void {
-    let key = "UNKNOWN_ERROR", param = "";
-    if (msg && msg.message) {
-      key = (typeof msg.message === "string" ? msg.message.trim() : msg.message);
-      if (key === "") {
-        key = "UNKNOWN_ERROR";
-      }
-    }
-
-    this.translate.get(key, { 'param': param }).subscribe((res: string) => this.messageText = res);
-  }
-
-  public get needAuth(): boolean {
-    return this.globalMessage ?
-      this.globalMessage.statusCode === httpStatusCode.Unauthorized : false;
-  }
-
-  // Show message text
-  public get message(): string {
-    return this.messageText;
-  }
-
-  signIn(): void {
-    // remove queryParam UN_LOGGED_PARAM of redirect url
-    const url = delUrlParam(this.router.url, UN_LOGGED_PARAM);
-    this.router.navigate([ CommonRoutes.EMBEDDED_SIGN_IN ], {queryParams: {redirect_url: url}});
-  }
-
-  onClose() {
-    if (this.timer) {
-      clearTimeout(this.timer);
-    }
-    this.globalMessageOpened = false;
-  }
-  // if navigate from global search(un-logged users visit public project)
-  isFromGlobalSearch(): boolean {
-    return this.route.snapshot.queryParams[UN_LOGGED_PARAM] === YES;
-  }
 }

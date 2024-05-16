@@ -24,7 +24,6 @@ const (
 	ExecutionStatusStopped    string = "Stopped"
 
 	CandidateKindImage string = "image"
-	CandidateKindChart string = "chart"
 
 	ExecutionTriggerManual   string = "Manual"
 	ExecutionTriggerSchedule string = "Schedule"
@@ -39,6 +38,8 @@ type Execution struct {
 	Status    string    `json:"status"`
 	Trigger   string    `json:"trigger"`
 	DryRun    bool      `json:"dry_run"`
+	Operator  string    `json:"operator"`
+	Type      string    `json:"-"`
 }
 
 // Task of retention

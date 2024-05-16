@@ -1,15 +1,30 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handler
 
 import (
 	"context"
 	"fmt"
-	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"regexp"
 	"strings"
 
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
+
 	"github.com/goharbor/harbor/src/common/rbac"
+	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/robot"
 	"github.com/goharbor/harbor/src/lib"
@@ -255,7 +270,9 @@ func (rAPI *robotV1API) validate(ctx context.Context, params operation.CreateRob
 
 	for _, policy := range params.Robot.Access {
 		p := &types.Policy{}
-		lib.JSONCopy(p, policy)
+		if err := lib.JSONCopy(p, policy); err != nil {
+			log.Warningf("failed to call JSONCopy on robot access policy when validate, error: %v", err)
+		}
 		if !mp[p.String()] {
 			return errors.New(nil).WithMessage("%s action of %s resource not exist in project %s", policy.Action, policy.Resource, projectNameOrID).WithCode(errors.BadRequestCode)
 		}

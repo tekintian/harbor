@@ -1,4 +1,4 @@
-// Copyright 2019 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ type Controller interface {
 
 type controller struct{}
 
-func (c *controller) GetHealth(ctx context.Context) *OverallHealthStatus {
+func (c *controller) GetHealth(_ context.Context) *OverallHealthStatus {
 	var isHealthy healthy = true
 	components := []*ComponentHealthStatus{}
 	ch := make(chan *ComponentHealthStatus, len(registry))

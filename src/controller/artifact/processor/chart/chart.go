@@ -17,7 +17,9 @@ package chart
 import (
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"io"
+
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 
 	ps "github.com/goharbor/harbor/src/controller/artifact/processor"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/base"
@@ -25,7 +27,6 @@ import (
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/chart"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // const definitions
@@ -57,7 +58,7 @@ type processor struct {
 	chartOperator chart.Operator
 }
 
-func (p *processor) AbstractAddition(ctx context.Context, artifact *artifact.Artifact, addition string) (*ps.Addition, error) {
+func (p *processor) AbstractAddition(_ context.Context, artifact *artifact.Artifact, addition string) (*ps.Addition, error) {
 	if addition != AdditionTypeValues && addition != AdditionTypeReadme && addition != AdditionTypeDependencies {
 		return nil, errors.New(nil).WithCode(errors.BadRequestCode).
 			WithMessage("addition %s isn't supported for %s", addition, ArtifactTypeChart)
@@ -84,11 +85,11 @@ func (p *processor) AbstractAddition(ctx context.Context, artifact *artifact.Art
 			if err != nil {
 				return nil, err
 			}
-			content, err := ioutil.ReadAll(blob)
+			defer blob.Close()
+			content, err := io.ReadAll(blob)
 			if err != nil {
 				return nil, err
 			}
-			blob.Close()
 			chartDetails, err := p.chartOperator.GetDetails(content)
 			if err != nil {
 				return nil, err
@@ -121,10 +122,10 @@ func (p *processor) AbstractAddition(ctx context.Context, artifact *artifact.Art
 	return nil, nil
 }
 
-func (p *processor) GetArtifactType(ctx context.Context, artifact *artifact.Artifact) string {
+func (p *processor) GetArtifactType(_ context.Context, _ *artifact.Artifact) string {
 	return ArtifactTypeChart
 }
 
-func (p *processor) ListAdditionTypes(ctx context.Context, artifact *artifact.Artifact) []string {
+func (p *processor) ListAdditionTypes(_ context.Context, _ *artifact.Artifact) []string {
 	return []string{AdditionTypeValues, AdditionTypeReadme, AdditionTypeDependencies}
 }

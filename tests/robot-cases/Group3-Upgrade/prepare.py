@@ -13,6 +13,9 @@ parser = argparse.ArgumentParser(description='The script to generate data for ha
 parser.add_argument('--endpoint', '-e', dest='endpoint', required=True, help='The endpoint to harbor')
 parser.add_argument('--version', '-v', dest='version', required=False, help='The version to harbor')
 parser.add_argument('--libpath', '-l', dest='libpath', required=False, help='e2e library')
+parser.add_argument('--src-registry', '-g', dest='LOCAL_REGISTRY', required=False, help='Sample images registry')
+parser.add_argument('--src-repo', '-p', dest='LOCAL_REGISTRY_NAMESPACE', required=False, help='Sample images repo')
+
 args = parser.parse_args()
 
 from os import path
@@ -56,8 +59,8 @@ def get_feature_branch(func):
 
 class HarborAPI:
     @get_feature_branch
-    def populate_projects(self, **kwargs):
-        for project in data["projects"]:
+    def populate_projects(self, key_name, create_project_only = False, **kwargs):
+        for project in data[key_name]:
             if kwargs["branch"] in [1,2]:
                 if "registry_name" in project:
                     print("Populate proxy project...")
@@ -67,6 +70,8 @@ class HarborAPI:
             else:
                 raise Exception(r"Error: Feature {} has no branch {}.".format(sys._getframe().f_code.co_name, branch))
             self.create_project(project, version=args.version)
+            if create_project_only:
+                continue
             for member in project["member"]:
                 self.add_member(project["name"], member["name"], member["role"], version=args.version)
             for robot_account in project["robot_account"]:
@@ -124,7 +129,7 @@ class HarborAPI:
             raise Exception(r"Error: Feature {} has no branch {}.".format(sys._getframe().f_code.co_name, branch))
 
     def create_user(self, username):
-        payload = {"username":username, "email":username+"@vmware.com", "password":"Harbor12345", "realname":username, "comment":"string"}
+        payload = {"username":username, "email":username+"@harbortest.com", "password":"Harbor12345", "realname":username, "comment":"string"}
         body=dict(body=payload)
         request(url+"users", 'post', **body)
 
@@ -316,7 +321,10 @@ class HarborAPI:
         body=dict(body=payload)
         request(url+"system/scanAll/schedule", 'post', **body)
 
-    def update_systemsetting(self, emailfrom, emailhost, emailport, emailuser, creation, selfreg, token, robot_token):
+    @get_feature_branch
+    def update_systemsetting(self, emailfrom, emailhost, emailport, emailuser, creation, selfreg, token, robot_token, **kwargs):
+        if kwargs["branch"] == 1:
+            robot_token = float(robot_token)*60*24
         payload = {
             "auth_mode": "db_auth",
             "email_from": emailfrom,
@@ -377,7 +385,6 @@ class HarborAPI:
                 raise Exception(r"Error: Robot account count {} is not legal!".format(len(robot_account["access"])))
         else:
             raise Exception(r"Error: Feature {} has no branch {}.".format(sys._getframe().f_code.co_name, branch))
-        print(payload)
         body=dict(body=payload)
         request(url+"projects/"+projectid+"/robots", 'post', **body)
 
@@ -488,9 +495,6 @@ class HarborAPI:
                     }
                 ],
                 "event_types":[
-                    "downloadChart",
-                    "deleteChart",
-                    "uploadChart",
                     "deleteImage",
                     "pullImage",
                     "pushImage",
@@ -499,7 +503,6 @@ class HarborAPI:
                 ],
                 "enabled":webhook["enabled"]
             }
-            print(payload)
             body=dict(body=payload)
             request(url+"projects/"+projectid+"/webhook/policies", 'post', **body)
         elif kwargs["branch"] == 2:
@@ -516,9 +519,6 @@ class HarborAPI:
                     "DELETE_ARTIFACT",
                     "PULL_ARTIFACT",
                     "PUSH_ARTIFACT",
-                    "DELETE_CHART",
-                    "DOWNLOAD_CHART",
-                    "UPLOAD_CHART",
                     "QUOTA_EXCEED",
                     "QUOTA_WARNING",
 					"REPLICATION",
@@ -528,7 +528,6 @@ class HarborAPI:
                 "enabled":webhook["enabled"],
                 "name":webhook["name"]
             }
-            print(payload)
             body=dict(body=payload)
             request(url+"projects/"+projectid+"/webhook/policies", 'post', **body)
         else:
@@ -575,7 +574,7 @@ class HarborAPI:
             except Exception as e:
                 print(str(e))
                 pass
-        open(target, 'wb').write(ca_content.encode('utf-8'))
+        open(target, 'wb').write(str(ca_content).encode('utf-8'))
 
     @get_feature_branch
     def push_artifact_index(self, project, name, tag, **kwargs):
@@ -593,12 +592,11 @@ def request(url, method, user = None, userp = None, **kwargs):
     if userp is None:
         userp = "Harbor12345"
     kwargs.setdefault('headers', kwargs.get('headers', {}))
-    kwargs['headers']['Accept'] = 'application/json'
+    #kwargs['headers']['Accept'] = 'application/json'
     if 'body' in kwargs:
         kwargs['headers']['Content-Type'] = 'application/json'
         kwargs['data'] = json.dumps(kwargs['body'])
         del kwargs['body']
-    print("url: ", url)
     resp = requests.request(method, url, verify=False, auth=(user, userp), **kwargs)
     if resp.status_code >= 400:
         raise Exception("[Exception Message] - {}".format(resp.text))
@@ -616,9 +614,6 @@ def push_image(image, project):
     os.system("docker tag "+image+" "+args.endpoint+"/"+project+"/"+image)
     os.system("docker login "+args.endpoint+" -u admin"+" -p Harbor12345")
     os.system("docker push "+args.endpoint+"/"+project+"/library/"+image)
-
-def push_signed_image(image, project, tag):
-    os.system("./sign_image.sh" + " " + args.endpoint + " " + project + " " + image + " " + tag)
 
 @get_feature_branch
 def set_url(**kwargs):
@@ -647,13 +642,12 @@ def do_data_creation():
     for distribution in data["distributions"]:
         harborAPI.add_distribution(distribution, version=args.version)
 
-    harborAPI.populate_projects(version=args.version)
+    harborAPI.populate_projects("projects", version=args.version)
     harborAPI.populate_quotas(version=args.version)
 
     harborAPI.push_artifact_index(data["projects"][0]["name"], data["projects"][0]["artifact_index"]["name"], data["projects"][0]["artifact_index"]["tag"], version=args.version)
     #pull_image("busybox", "redis", "haproxy", "alpine", "httpd:2")
     push_self_build_image_to_project(data["projects"][0]["name"], args.endpoint, 'admin', 'Harbor12345', "busybox", "latest")
-    push_signed_image("alpine", data["projects"][0]["name"], "latest")
 
     for replicationrule in data["replicationrule"]:
         harborAPI.add_replication_rule(replicationrule, version=args.version)
@@ -663,12 +657,12 @@ def do_data_creation():
 
     harborAPI.update_systemsetting(data["configuration"]["emailsetting"]["emailfrom"],
                                    data["configuration"]["emailsetting"]["emailserver"],
-                                   float(data["configuration"]["emailsetting"]["emailport"]),
+                                   int(data["configuration"]["emailsetting"]["emailport"]),
                                    data["configuration"]["emailsetting"]["emailuser"],
                                    data["configuration"]["projectcreation"],
                                    data["configuration"]["selfreg"],
-                                   float(data["configuration"]["token"]),
-                                   float(data["configuration"]["robot_token"])*60*24)
+                                   int(data["configuration"]["token"]),
+                                   int(data["configuration"]["robot_token"]), version=args.version)
 
     harborAPI.add_sys_allowlist(data["configuration"]["deployment_security"], version=args.version)
 

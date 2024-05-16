@@ -16,47 +16,45 @@ package reg
 
 import (
 	"context"
+
 	commonthttp "github.com/goharbor/harbor/src/common/http"
-	"github.com/goharbor/harbor/src/lib/config"
-
-	// register the Harbor adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/harbor"
-	// register the DockerHub adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/dockerhub"
-	// register the Native adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/native"
-	// register the huawei adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/huawei"
-	// register the Google Gcr adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/googlegcr"
-	// register the AwsEcr adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/awsecr"
-	// register the AzureAcr adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/azurecr"
-	// register the AliACR adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/aliacr"
-	// register the Jfrog Artifactory adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/jfrog"
-	// register the Quay.io adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/quay"
-	// register the Helm Hub adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/helmhub"
-	// register the GitLab adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/gitlab"
-	// register the DTR adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/dtr"
-	// register the Artifact Hub adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/artifacthub"
-	// register the TencentCloud TCR adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/tencentcr"
-	// register the Github Container Registry adapter
-	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/githubcr"
-
 	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/dao"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
+
+	// register the AliACR adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/aliacr"
+	// register the AwsEcr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/awsecr"
+	// register the AzureAcr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/azurecr"
+	// register the DockerHub adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/dockerhub"
+	// register the DTR adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/dtr"
+	// register the Github Container Registry adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/githubcr"
+	// register the GitLab adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/gitlab"
+	// register the Google Gcr adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/googlegcr"
+	// register the Harbor adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/harbor"
+	// register the huawei adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/huawei"
+	// register the Jfrog Artifactory adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/jfrog"
+	// register the Native adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/native"
+	// register the Quay.io adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/quay"
+	// register the TencentCloud TCR adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/tencentcr"
+	// register the VolcEngine CR Registry adapter
+	_ "github.com/goharbor/harbor/src/pkg/reg/adapter/volcenginecr"
 )
 
 var (
@@ -148,7 +146,7 @@ func (m *manager) Delete(ctx context.Context, id int64) error {
 	return m.dao.Delete(ctx, id)
 }
 
-func (m *manager) CreateAdapter(ctx context.Context, registry *model.Registry) (adapter.Adapter, error) {
+func (m *manager) CreateAdapter(_ context.Context, registry *model.Registry) (adapter.Adapter, error) {
 	factory, err := adapter.GetFactory(registry.Type)
 	if err != nil {
 		return nil, err
@@ -156,11 +154,11 @@ func (m *manager) CreateAdapter(ctx context.Context, registry *model.Registry) (
 	return factory.Create(registry)
 }
 
-func (m *manager) ListRegistryProviderTypes(ctx context.Context) ([]string, error) {
+func (m *manager) ListRegistryProviderTypes(_ context.Context) ([]string, error) {
 	return adapter.ListRegisteredAdapterTypes(), nil
 }
 
-func (m *manager) ListRegistryProviderInfos(ctx context.Context) (infos map[string]*model.AdapterPattern, err error) {
+func (m *manager) ListRegistryProviderInfos(_ context.Context) (infos map[string]*model.AdapterPattern, err error) {
 	return adapter.ListRegisteredAdapterInfos(), nil
 }
 
@@ -226,7 +224,7 @@ func fromDaoModel(registry *dao.Registry) (*model.Registry, error) {
 		Credential:   &model.Credential{},
 		URL:          registry.URL,
 		Insecure:     registry.Insecure,
-		Status:       registry.Health,
+		Status:       registry.Status,
 		CreationTime: registry.CreationTime,
 		UpdateTime:   registry.UpdateTime,
 	}
@@ -260,7 +258,7 @@ func toDaoModel(registry *model.Registry) (*dao.Registry, error) {
 		Type:         string(registry.Type),
 		Insecure:     registry.Insecure,
 		Description:  registry.Description,
-		Health:       registry.Status,
+		Status:       registry.Status,
 		CreationTime: registry.CreationTime,
 		UpdateTime:   registry.UpdateTime,
 	}

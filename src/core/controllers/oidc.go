@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,18 +15,18 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"net/http"
 	"strings"
 
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
+	ctluser "github.com/goharbor/harbor/src/controller/user"
 	"github.com/goharbor/harbor/src/core/api"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/oidc"
@@ -35,6 +35,7 @@ import (
 const tokenKey = "oidc_token"
 const stateKey = "oidc_state"
 const userInfoKey = "oidc_user_info"
+const redirectURLKey = "oidc_redirect_url"
 const oidcUserComment = "Onboarded via OIDC provider"
 
 // OIDCController handles requests for OIDC login, callback and user onboard
@@ -48,7 +49,7 @@ type onboardReq struct {
 
 // Prepare include public code path for call request handler of OIDCController
 func (oc *OIDCController) Prepare() {
-	if mode, _ := config.AuthMode(orm.Context()); mode != common.OIDCAuth {
+	if mode, _ := config.AuthMode(oc.Context()); mode != common.OIDCAuth {
 		oc.SendPreconditionFailedError(fmt.Errorf("auth mode: %s is not OIDC based", mode))
 		return
 	}
@@ -57,12 +58,27 @@ func (oc *OIDCController) Prepare() {
 // RedirectLogin redirect user's browser to OIDC provider's login page
 func (oc *OIDCController) RedirectLogin() {
 	state := utils.GenerateRandomString()
-	url, err := oidc.AuthCodeURL(state)
+	url, err := oidc.AuthCodeURL(oc.Context(), state)
 	if err != nil {
 		oc.SendInternalServerError(err)
 		return
 	}
-	oc.SetSession(stateKey, state)
+	redirectURL := oc.Ctx.Request.URL.Query().Get("redirect_url")
+	if !utils.IsLocalPath(redirectURL) {
+		log.Errorf("invalid redirect url: %v", redirectURL)
+		oc.SendBadRequestError(fmt.Errorf("cannot redirect to other site"))
+		return
+	}
+	if err := oc.SetSession(redirectURLKey, redirectURL); err != nil {
+		log.Errorf("failed to set session for key: %s, error: %v", redirectURLKey, err)
+		oc.SendInternalServerError(err)
+		return
+	}
+	if err := oc.SetSession(stateKey, state); err != nil {
+		log.Errorf("failed to set session for key: %s, error: %v", stateKey, err)
+		oc.SendInternalServerError(err)
+		return
+	}
 	log.Debugf("State dumped to session: %s", state)
 	// Force to use the func 'Redirect' of beego.Controller
 	oc.Controller.Redirect(url, http.StatusFound)
@@ -85,7 +101,16 @@ func (oc *OIDCController) Callback() {
 		oc.SendBadRequestError(errors.Errorf("OIDC callback returned error: %s - %s", errorCode, errorDescription))
 		return
 	}
-
+	var redirectURLStr string
+	redirectURL := oc.GetSession(redirectURLKey)
+	if redirectURL != nil {
+		redirectURLStr = redirectURL.(string)
+		if err := oc.DelSession(redirectURLKey); err != nil {
+			log.Errorf("failed to delete session for key:%s, error: %v", redirectURLKey, err)
+			oc.SendInternalServerError(err)
+			return
+		}
+	}
 	code := oc.Ctx.Request.URL.Query().Get("code")
 	ctx := oc.Ctx.Request.Context()
 	token, err := oidc.ExchangeToken(ctx, code)
@@ -110,31 +135,27 @@ func (oc *OIDCController) Callback() {
 		oc.SendInternalServerError(err)
 		return
 	}
-	u, err := dao.GetUserBySubIss(info.Subject, info.Issuer)
-	if err != nil {
-		oc.SendInternalServerError(err)
-		return
-	}
 	tokenBytes, err := json.Marshal(token)
 	if err != nil {
 		oc.SendInternalServerError(err)
 		return
 	}
-	oc.SetSession(tokenKey, tokenBytes)
-
-	oidcSettings, err := config.OIDCSetting(ctx)
-	if err != nil {
+	if err := oc.SetSession(tokenKey, tokenBytes); err != nil {
+		log.Errorf("failed to set session for key: %s, error: %v", tokenKey, err)
 		oc.SendInternalServerError(err)
 		return
 	}
-
-	if u == nil {
+	u, err := ctluser.Ctl.GetBySubIss(ctx, info.Subject, info.Issuer)
+	if errors.IsNotFoundErr(err) { // User is not onboarded, kickoff the onboard flow
 		// Recover the username from d.Username by default
 		username := info.Username
-
 		// Fix blanks in username
 		username = strings.Replace(username, " ", "_", -1)
-
+		oidcSettings, err := config.OIDCSetting(ctx)
+		if err != nil {
+			oc.SendInternalServerError(err)
+			return
+		}
 		// If automatic onboard is enabled, skip the onboard page
 		if oidcSettings.AutoOnboard {
 			log.Debug("Doing automatic onboarding\n")
@@ -143,38 +164,53 @@ func (oc *OIDCController) Callback() {
 					oidcSettings.UserClaim))
 				return
 			}
-			user, onboarded := userOnboard(oc, info, username, tokenBytes)
-			if onboarded == false {
+			userRec, onboarded := userOnboard(ctx, oc, info, username, tokenBytes)
+			if !onboarded {
 				log.Error("User not onboarded\n")
 				return
 			}
 			log.Debug("User automatically onboarded\n")
-			u = user
+			u = userRec
 		} else {
-			oc.SetSession(userInfoKey, string(ouDataStr))
-			oc.Controller.Redirect(fmt.Sprintf("/oidc-onboard?username=%s", username), http.StatusFound)
+			if err := oc.SetSession(userInfoKey, string(ouDataStr)); err != nil {
+				log.Errorf("failed to set session for key: %s, error: %v", userInfoKey, err)
+				oc.SendInternalServerError(err)
+				return
+			}
+			oc.Controller.Redirect(fmt.Sprintf("/oidc-onboard?username=%s&redirect_url=%s", username, redirectURLStr), http.StatusFound)
 			// Once redirected, no further actions are done
 			return
 		}
+	} else if err != nil {
+		oc.SendError(err)
+		return
 	}
 	oidc.InjectGroupsToUser(info, u)
-	oidcUser, err := dao.GetOIDCUserByUserID(u.UserID)
+	um, err := ctluser.Ctl.Get(ctx, u.UserID, &ctluser.Option{WithOIDCInfo: true})
+	if err != nil {
+		oc.SendError(err)
+		return
+	}
+	_, t, err := secretAndToken(tokenBytes)
 	if err != nil {
 		oc.SendInternalServerError(err)
 		return
 	}
-	_, t, err := secretAndToken(tokenBytes)
+	oidcUser := um.OIDCUserMeta
 	oidcUser.Token = t
-	if err := dao.UpdateOIDCUser(oidcUser); err != nil {
-		oc.SendInternalServerError(err)
+	if err := ctluser.Ctl.UpdateOIDCMeta(ctx, oidcUser); err != nil {
+		oc.SendError(err)
 		return
 	}
 	oc.PopulateUserSession(*u)
-	oc.Controller.Redirect("/", http.StatusFound)
 
+	if redirectURLStr == "" {
+		redirectURLStr = "/"
+	}
+	oc.Controller.Redirect(redirectURLStr, http.StatusFound)
 }
 
-func userOnboard(oc *OIDCController, info *oidc.UserInfo, username string, tokenBytes []byte) (*models.User, bool) {
+func userOnboard(ctx context.Context, oc *OIDCController, info *oidc.UserInfo, username string, tokenBytes []byte) (*models.User, bool) {
 	s, t, err := secretAndToken(tokenBytes)
 	if err != nil {
 		oc.SendInternalServerError(err)
@@ -195,19 +231,13 @@ func userOnboard(oc *OIDCController, info *oidc.UserInfo, username string, token
 	}
 	oidc.InjectGroupsToUser(info, user)
 
-	log.Debugf("User created: %+v\n", *user)
+	log.Debugf("User created: %v\n", user.Username)
 
-	err = dao.OnBoardOIDCUser(user)
+	err = ctluser.Ctl.OnboardOIDCUser(ctx, user)
 	if err != nil {
-		if strings.Contains(err.Error(), dao.ErrDupUser.Error()) {
-			oc.RenderError(http.StatusConflict, "Conflict, the user with same username or email has been onboarded.")
-			return nil, false
-		}
-
-		oc.SendInternalServerError(err)
+		oc.SendError(err)
 		return nil, false
 	}
-
 	return user, true
 }
 
@@ -223,8 +253,8 @@ func (oc *OIDCController) Onboard() {
 		oc.SendBadRequestError(errors.New("username with illegal length"))
 		return
 	}
-	if utils.IsContainIllegalChar(username, []string{",", "~", "#", "$", "%"}) {
-		oc.SendBadRequestError(errors.New("username contains illegal characters"))
+	if strings.ContainsAny(username, common.IllegalCharsInUsername) {
+		oc.SendBadRequestError(errors.Errorf("username %v contains illegal characters: %v", username, common.IllegalCharsInUsername))
 		return
 	}
 
@@ -246,13 +276,16 @@ func (oc *OIDCController) Onboard() {
 		oc.SendInternalServerError(err)
 		return
 	}
-
-	if user, onboarded := userOnboard(oc, d, username, tb); onboarded {
+	ctx := oc.Ctx.Request.Context()
+	if user, onboarded := userOnboard(ctx, oc, d, username, tb); onboarded {
 		user.OIDCUserMeta = nil
-		oc.DelSession(userInfoKey)
+		if err := oc.DelSession(userInfoKey); err != nil {
+			log.Errorf("failed to delete session for key:%s, error: %v", userInfoKey, err)
+			oc.SendInternalServerError(err)
+			return
+		}
 		oc.PopulateUserSession(*user)
 	}
-
 }
 
 func secretAndToken(tokenBytes []byte) (string, string, error) {

@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/lib/selector"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/audit/model"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 )
 
@@ -38,13 +39,11 @@ const (
 	TopicCreateTag         = "CREATE_TAG"
 	TopicDeleteTag         = "DELETE_TAG"
 	TopicScanningFailed    = "SCANNING_FAILED"
+	TopicScanningStopped   = "SCANNING_STOPPED"
 	TopicScanningCompleted = "SCANNING_COMPLETED"
 	// QuotaExceedTopic is topic for quota warning event, the usage reaches the warning bar of limitation, like 85%
 	TopicQuotaWarning    = "QUOTA_WARNING"
 	TopicQuotaExceed     = "QUOTA_EXCEED"
-	TopicUploadChart     = "UPLOAD_CHART"
-	TopicDownloadChart   = "DOWNLOAD_CHART"
-	TopicDeleteChart     = "DELETE_CHART"
 	TopicReplication     = "REPLICATION"
 	TopicArtifactLabeled = "ARTIFACT_LABELED"
 	TopicTagRetention    = "TAG_RETENTION"
@@ -64,7 +63,7 @@ func (c *CreateProjectEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    c.ProjectID,
 		OpTime:       c.OccurAt,
-		Operation:    "create",
+		Operation:    rbac.ActionCreate.String(),
 		Username:     c.Operator,
 		ResourceType: "project",
 		Resource:     c.Project}
@@ -90,7 +89,7 @@ func (d *DeleteProjectEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    d.ProjectID,
 		OpTime:       d.OccurAt,
-		Operation:    "delete",
+		Operation:    rbac.ActionDelete.String(),
 		Username:     d.Operator,
 		ResourceType: "project",
 		Resource:     d.Project}
@@ -116,7 +115,7 @@ func (d *DeleteRepositoryEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    d.ProjectID,
 		OpTime:       d.OccurAt,
-		Operation:    "delete",
+		Operation:    rbac.ActionDelete.String(),
 		Username:     d.Operator,
 		ResourceType: "repository",
 		Resource:     d.Repository,
@@ -155,12 +154,12 @@ func (p *PushArtifactEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    p.Artifact.ProjectID,
 		OpTime:       p.OccurAt,
-		Operation:    "create",
+		Operation:    rbac.ActionCreate.String(),
 		Username:     p.Operator,
 		ResourceType: "artifact"}
 
 	if len(p.Tags) == 0 {
-		auditLog.Resource = fmt.Sprintf("%s:%s",
+		auditLog.Resource = fmt.Sprintf("%s@%s",
 			p.Artifact.RepositoryName, p.Artifact.Digest)
 	} else {
 		auditLog.Resource = fmt.Sprintf("%s:%s",
@@ -184,12 +183,12 @@ func (p *PullArtifactEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    p.Artifact.ProjectID,
 		OpTime:       p.OccurAt,
-		Operation:    "pull",
+		Operation:    rbac.ActionPull.String(),
 		Username:     p.Operator,
 		ResourceType: "artifact"}
 
 	if len(p.Tags) == 0 {
-		auditLog.Resource = fmt.Sprintf("%s:%s",
+		auditLog.Resource = fmt.Sprintf("%s@%s",
 			p.Artifact.RepositoryName, p.Artifact.Digest)
 	} else {
 		auditLog.Resource = fmt.Sprintf("%s:%s",
@@ -220,10 +219,10 @@ func (d *DeleteArtifactEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    d.Artifact.ProjectID,
 		OpTime:       d.OccurAt,
-		Operation:    "delete",
+		Operation:    rbac.ActionDelete.String(),
 		Username:     d.Operator,
 		ResourceType: "artifact",
-		Resource:     fmt.Sprintf("%s:%s", d.Artifact.RepositoryName, d.Artifact.Digest)}
+		Resource:     fmt.Sprintf("%s@%s", d.Artifact.RepositoryName, d.Artifact.Digest)}
 	return auditLog, nil
 }
 
@@ -246,7 +245,7 @@ func (c *CreateTagEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    c.AttachedArtifact.ProjectID,
 		OpTime:       c.OccurAt,
-		Operation:    "create",
+		Operation:    rbac.ActionCreate.String(),
 		Username:     c.Operator,
 		ResourceType: "tag",
 		Resource:     fmt.Sprintf("%s:%s", c.Repository, c.Tag)}
@@ -274,7 +273,7 @@ func (d *DeleteTagEvent) ResolveToAuditLog() (*model.AuditLog, error) {
 	auditLog := &model.AuditLog{
 		ProjectID:    d.AttachedArtifact.ProjectID,
 		OpTime:       d.OccurAt,
-		Operation:    "delete",
+		Operation:    rbac.ActionDelete.String(),
 		Username:     d.Operator,
 		ResourceType: "tag",
 		Resource:     fmt.Sprintf("%s:%s", d.Repository, d.Tag)}
@@ -290,6 +289,7 @@ func (d *DeleteTagEvent) String() string {
 // ScanImageEvent is scanning image related event data to publish
 type ScanImageEvent struct {
 	EventType string
+	ScanType  string
 	Artifact  *v1.Artifact
 	OccurAt   time.Time
 	Operator  string
@@ -300,29 +300,15 @@ func (s *ScanImageEvent) String() string {
 		s.Artifact, s.Operator, s.OccurAt.Format("2006-01-02 15:04:05"))
 }
 
-// ChartEvent is chart related event data to publish
-type ChartEvent struct {
-	EventType   string
-	ProjectName string
-	ChartName   string
-	Versions    []string
-	OccurAt     time.Time
-	Operator    string
-}
-
-func (c *ChartEvent) String() string {
-	return fmt.Sprintf("ProjectName-%s ChartName-%s Versions-%s Operator-%s OccurAt-%s",
-		c.ProjectName, c.ChartName, c.Versions, c.Operator, c.OccurAt.Format("2006-01-02 15:04:05"))
-}
-
 // QuotaEvent is project quota related event data to publish
 type QuotaEvent struct {
 	EventType string
-	Project   *models.Project
+	Project   *proModels.Project
 	Resource  *ImgResource
 	OccurAt   time.Time
 	RepoName  string
 	Msg       string
+	Operator  string
 }
 
 func (q *QuotaEvent) String() string {
@@ -369,6 +355,8 @@ type RetentionEvent struct {
 	OccurAt   time.Time
 	Status    string
 	Deleted   []*selector.Result
+	Total     int
+	Retained  int
 }
 
 func (r *RetentionEvent) String() string {

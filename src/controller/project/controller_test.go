@@ -19,19 +19,20 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
+	commonmodels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	models2 "github.com/goharbor/harbor/src/pkg/allowlist/models"
 	"github.com/goharbor/harbor/src/pkg/project/models"
-	usermodels "github.com/goharbor/harbor/src/pkg/user/models"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
 	"github.com/goharbor/harbor/src/testing/mock"
 	allowlisttesting "github.com/goharbor/harbor/src/testing/pkg/allowlist"
 	"github.com/goharbor/harbor/src/testing/pkg/project"
 	"github.com/goharbor/harbor/src/testing/pkg/project/metadata"
 	"github.com/goharbor/harbor/src/testing/pkg/user"
-	"github.com/stretchr/testify/suite"
 )
 
 type ControllerTestSuite struct {
@@ -50,16 +51,16 @@ func (suite *ControllerTestSuite) TestCreate() {
 	c := controller{projectMgr: mgr, allowlistMgr: allowlistMgr, metaMgr: metadataMgr}
 
 	{
-		metadataMgr.On("Add", ctx, mock.Anything, mock.Anything).Return(nil).Once()
-		mgr.On("Create", ctx, mock.Anything).Return(int64(2), nil).Once()
+		metadataMgr.On("Add", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+		mgr.On("Create", mock.Anything, mock.Anything).Return(int64(2), nil).Once()
 		projectID, err := c.Create(ctx, &models.Project{OwnerID: 1, Metadata: map[string]string{"public": "true"}})
 		suite.Nil(err)
 		suite.Equal(int64(2), projectID)
 	}
 
 	{
-		metadataMgr.On("Add", ctx, mock.Anything, mock.Anything).Return(fmt.Errorf("oops")).Once()
-		mgr.On("Create", ctx, mock.Anything).Return(int64(2), nil).Once()
+		metadataMgr.On("Add", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("oops")).Once()
+		mgr.On("Create", mock.Anything, mock.Anything).Return(int64(2), nil).Once()
 		projectID, err := c.Create(ctx, &models.Project{OwnerID: 1, Metadata: map[string]string{"public": "true"}})
 		suite.Error(err)
 		suite.Equal(int64(0), projectID)
@@ -122,8 +123,8 @@ func (suite *ControllerTestSuite) TestWithOwner() {
 	}, nil)
 
 	userMgr := &user.Manager{}
-	userMgr.On("List", ctx, mock.Anything).Return(usermodels.Users{
-		&usermodels.User{UserID: 1, Username: "admin"},
+	userMgr.On("List", ctx, mock.Anything).Return(commonmodels.Users{
+		&commonmodels.User{UserID: 1, Username: "admin"},
 	}, nil)
 
 	c := controller{projectMgr: mgr, userMgr: userMgr}

@@ -15,6 +15,10 @@
 package ldap
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/config/models"
@@ -23,9 +27,6 @@ import (
 	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/goharbor/harbor/src/testing/mock"
 	"github.com/goharbor/harbor/src/testing/pkg/ldap"
-	"testing"
-
-	"github.com/stretchr/testify/suite"
 )
 
 var defaultConfigWithVerifyCert = map[string]interface{}{
@@ -64,7 +65,6 @@ var defaultConfigWithVerifyCert = map[string]interface{}{
 	common.MaxJobWorkers:              3,
 	common.TokenExpiration:            30,
 	common.AdminInitialPassword:       "password",
-	common.WithNotary:                 false,
 }
 
 var ldapCfg = models.LdapConf{

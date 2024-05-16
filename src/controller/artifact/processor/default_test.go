@@ -16,19 +16,19 @@ package processor
 
 import (
 	"context"
-	"io/ioutil"
+	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
-	"github.com/goharbor/harbor/src/pkg/distribution"
-	"github.com/goharbor/harbor/src/testing/mock"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/goharbor/harbor/src/pkg/artifact"
+	"github.com/goharbor/harbor/src/pkg/distribution"
+	"github.com/goharbor/harbor/src/testing/mock"
 	"github.com/goharbor/harbor/src/testing/pkg/parser"
 	"github.com/goharbor/harbor/src/testing/pkg/registry"
-
-	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -117,17 +117,89 @@ var (
         }
     ]
 }`
+	OCIManifestWithUnknownJsonConfig = `{ 
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "config": {
+       "mediaType": "application/vnd.exmaple.config.v1+json",
+       "digest": "sha256:48ef4a53c0770222d9752cd0588431dbda54667046208c79804e34c15c1579cd",
+       "size": 129
+    },
+    "layers": [
+       {
+          "mediaType": "application/vnd.example.data.v1.tar+gzip",
+          "digest": "sha256:e258d248fda94c63753607f7c4494ee0fcbe92f1a76bfdac795c9d84101eb317",
+          "size": 1234
+       }
+    ],
+    "annotations": {
+       "com.example.key1": "value1"
+    }
+ }`
+	UnknownJsonConfig = `{
+    "author": "yminer",
+	"architecture": "amd64",
+    "selfdefined": "true"
+}`
+	OCIManifestWithUnknownConfig = `{
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "config": {
+        "mediaType": "application/vnd.nhl.peanut.butter.bagel",
+        "digest": "sha256:ee29d2e91da0e5dbf6536f5b369148a83ef59b0ce96e49da65dd6c25eb1fa44f",
+        "size": 33,
+        "newUnspecifiedField": null
+    },
+    "layers": [
+        {
+            "mediaType": "application/vnd.oci.empty.v1+json",
+            "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "size": 2,
+            "newUnspecifiedField": "null"
+        }
+    ],
+    "subject": {
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:5a01bbc4ce6f52541cbc7e6af4b22bb107991a4bdd433103ff65aeb00756e906",
+        "size": 714,
+        "newUnspecifiedField": null
+    }
+ }`
+	UnknownConfig = `{NHL Peanut Butter on my NHL bagel}`
+
+	OCIManifestWithEmptyConfig = `{
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "artifactType": "application/vnd.example+type",
+    "config": {
+      "mediaType": "application/vnd.oci.empty.v1+json",
+      "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "size": 2
+    },
+    "layers": [
+      {
+        "mediaType": "application/vnd.example+type",
+        "digest": "sha256:e258d248fda94c63753607f7c4494ee0fcbe92f1a76bfdac795c9d84101eb317",
+        "size": 1234
+      }
+    ],
+    "annotations": {
+      "oci.opencontainers.image.created": "2023-01-02T03:04:05Z",
+      "com.example.data": "payload"
+    }
+ }`
+	emptyConfig = `{}`
 )
 
 type defaultProcessorTestSuite struct {
 	suite.Suite
 	processor *defaultProcessor
 	parser    *parser.Parser
-	regCli    *registry.FakeClient
+	regCli    *registry.Client
 }
 
 func (d *defaultProcessorTestSuite) SetupTest() {
-	d.regCli = &registry.FakeClient{}
+	d.regCli = &registry.Client{}
 	d.processor = &defaultProcessor{
 		regCli: d.regCli,
 	}
@@ -147,11 +219,29 @@ func (d *defaultProcessorTestSuite) TestGetArtifactType() {
 	typee = processor.GetArtifactType(nil, art)
 	d.Equal(ArtifactTypeUnknown, typee)
 
+	mediaType = "application/vnd.oci.empty.v1+json"
+	art = &artifact.Artifact{MediaType: mediaType}
+	processor = &defaultProcessor{}
+	typee = processor.GetArtifactType(nil, art)
+	d.Equal(ArtifactTypeUnknown, typee)
+
+	mediaType = "application/vnd.nhl.peanut.butter.bagel"
+	art = &artifact.Artifact{MediaType: mediaType}
+	processor = &defaultProcessor{}
+	typee = processor.GetArtifactType(nil, art)
+	d.Equal(ArtifactTypeUnknown, typee)
+
 	mediaType = "application/vnd.oci.image.config.v1+json"
 	art = &artifact.Artifact{MediaType: mediaType}
 	processor = &defaultProcessor{}
 	typee = processor.GetArtifactType(nil, art)
 	d.Equal("IMAGE", typee)
+
+	mediaType = "application/vnd.example.config.v1+json"
+	art = &artifact.Artifact{MediaType: mediaType}
+	processor = &defaultProcessor{}
+	typee = processor.GetArtifactType(nil, art)
+	d.Equal(ArtifactTypeUnknown, typee)
 
 	mediaType = "application/vnd.cncf.helm.chart.config.v1+json"
 	art = &artifact.Artifact{MediaType: mediaType}
@@ -178,11 +268,66 @@ func (d *defaultProcessorTestSuite) TestAbstractMetadata() {
 	manifestMediaType, content, err := manifest.Payload()
 	d.Require().Nil(err)
 
-	configBlob := ioutil.NopCloser(strings.NewReader(ormbConfig))
-	art := &artifact.Artifact{ManifestMediaType: manifestMediaType}
-	d.regCli.On("PullBlob").Return(0, configBlob, nil)
+	metadata := map[string]interface{}{}
+	configBlob := io.NopCloser(strings.NewReader(ormbConfig))
+	err = json.NewDecoder(configBlob).Decode(&metadata)
+	d.Require().Nil(err)
+	art := &artifact.Artifact{ManifestMediaType: manifestMediaType, ExtraAttrs: metadata}
+	d.Len(art.ExtraAttrs, 13)
+
+	d.regCli.On("PullBlob", mock.Anything, mock.Anything).Return(int64(0), configBlob, nil)
 	d.parser.On("Parse", context.TODO(), mock.AnythingOfType("*artifact.Artifact"), mock.AnythingOfType("[]byte")).Return(nil)
 	err = d.processor.AbstractMetadata(nil, art, content)
+	d.Require().Nil(err)
+	d.Len(art.ExtraAttrs, 12)
+}
+
+func (d *defaultProcessorTestSuite) TestAbstractMetadataOfOCIManifesttWithUnknownJsonConfig() {
+	manifest, _, err := distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(OCIManifestWithUnknownJsonConfig))
+	d.Require().Nil(err)
+	manifestMediaType, content, err := manifest.Payload()
+	d.Require().Nil(err)
+
+	configBlob := io.NopCloser(strings.NewReader(UnknownJsonConfig))
+	metadata := map[string]interface{}{}
+	err = json.NewDecoder(configBlob).Decode(&metadata)
+	d.Require().Nil(err)
+
+	art := &artifact.Artifact{ManifestMediaType: manifestMediaType, MediaType: "application/vnd.example.config.v1+json"}
+
+	d.regCli.On("PullBlob", mock.Anything, mock.Anything).Return(int64(129), configBlob, nil)
+	d.parser.On("Parse", context.TODO(), mock.AnythingOfType("*artifact.Artifact"), mock.AnythingOfType("[]byte")).Return(nil)
+	err = d.processor.AbstractMetadata(context.TODO(), art, content)
+	d.Require().Nil(err)
+	d.Len(art.ExtraAttrs, 0)
+	d.NotEqual(art.ExtraAttrs, len(metadata))
+
+}
+
+func (d *defaultProcessorTestSuite) TestAbstractMetadataWithUnknownConfig() {
+	manifest, _, err := distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(OCIManifestWithUnknownConfig))
+	d.Require().Nil(err)
+	manifestMediaType, content, err := manifest.Payload()
+	d.Require().Nil(err)
+
+	configBlob := io.NopCloser(strings.NewReader(UnknownConfig))
+	d.regCli.On("PullBlob", mock.Anything, mock.Anything).Return(int64(0), configBlob, nil)
+	art := &artifact.Artifact{ManifestMediaType: manifestMediaType, MediaType: "application/vnd.nhl.peanut.butter.bagel"}
+	err = d.processor.AbstractMetadata(context.TODO(), art, content)
+	d.Require().Nil(err)
+	d.Len(art.ExtraAttrs, 0)
+}
+
+func (d *defaultProcessorTestSuite) TestAbstractMetadataWithEmptyConfig() {
+	manifest, _, err := distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(OCIManifestWithEmptyConfig))
+	d.Require().Nil(err)
+	manifestMediaType, content, err := manifest.Payload()
+	d.Require().Nil(err)
+
+	art := &artifact.Artifact{ManifestMediaType: manifestMediaType, MediaType: "application/vnd.oci.empty.v1+json"}
+	err = d.processor.AbstractMetadata(context.TODO(), art, content)
+	d.Assert().Equal(0, len(art.ExtraAttrs))
+	d.Assert().Equal(2, len(emptyConfig))
 	d.Require().Nil(err)
 }
 

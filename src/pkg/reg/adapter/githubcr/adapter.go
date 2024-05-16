@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package githubcr
 
 import (
@@ -77,7 +91,7 @@ func newAdapter(registry *model.Registry) *adapter {
 			registry.Credential.AccessSecret)
 	}
 
-	var transport = util.GetHTTPTransport(registry.Insecure)
+	var transport = common_http.GetHTTPTransport(common_http.WithInsecure(registry.Insecure))
 
 	return &adapter{
 		Adapter:  native.NewAdapter(registry),
@@ -130,7 +144,7 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) (resources []*model.Re
 	if paths, ok := util.IsSpecificPath(pattern); ok {
 		repositories = paths
 	} else {
-		err = errors.New("Only support specific repository name")
+		err = errors.New("only support specific repository name")
 		return
 	}
 
@@ -145,7 +159,6 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) (resources []*model.Re
 		index := i
 		repo := r
 		runner.AddTask(func() error {
-
 			artifacts, err := a.listArtifacts(repo, filters)
 			if err != nil {
 				return fmt.Errorf("failed to list artifacts of repository %s: %v", repo, err)
@@ -194,6 +207,6 @@ func (a *adapter) listArtifacts(repository string, filters []*model.Filter) ([]*
 	return filter.DoFilterArtifacts(artifacts, filters)
 }
 
-func (a *adapter) DeleteManifest(repository, reference string) error {
+func (a *adapter) DeleteManifest(_, _ string) error {
 	return nil
 }

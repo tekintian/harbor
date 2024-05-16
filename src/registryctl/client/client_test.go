@@ -16,10 +16,11 @@ package client
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/suite"
 	"net/http"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/suite"
 
 	"github.com/goharbor/harbor/src/common/utils/test"
 )
@@ -41,13 +42,6 @@ func (c *clientTestSuite) SetupTest() {
 func (c *clientTestSuite) TesHealth() {
 	err := c.client.Health()
 	c.Require().Nil(err)
-}
-
-func (c *clientTestSuite) TesStartGC() {
-	gcr, err := c.client.StartGC()
-	c.Require().Nil(err)
-	c.Equal(gcr.Msg, "hello-world")
-	c.Equal(gcr.Status, true)
 }
 
 func (c *clientTestSuite) TestDeleteManifest() {

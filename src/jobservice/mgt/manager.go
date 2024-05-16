@@ -21,6 +21,8 @@ import (
 	"strings"
 
 	"github.com/gocraft/work"
+	"github.com/gomodule/redigo/redis"
+
 	"github.com/goharbor/harbor/src/jobservice/common/query"
 	"github.com/goharbor/harbor/src/jobservice/common/rds"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
@@ -29,10 +31,9 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/logger"
 	"github.com/goharbor/harbor/src/jobservice/period"
 	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/gomodule/redigo/redis"
 )
 
-// Manager defies the related operations to handle the management of job stats.
+// Manager defines the related operations to handle the management of job stats.
 type Manager interface {
 	// Get the stats data of all kinds of jobs.
 	// Data returned by pagination.
@@ -242,7 +243,7 @@ func (bm *basicManager) GetPeriodicExecution(pID string, q *query.Parameter) (re
 	for _, eID := range executionIDs {
 		t := job.NewBasicTrackerWithID(bm.ctx, eID, bm.namespace, bm.pool, nil, nil)
 		if er := t.Load(); er != nil {
-			logger.Errorf("track job %s error: %s", eID, err)
+			logger.Errorf("track job %s error: %s", eID, er)
 			continue
 		}
 

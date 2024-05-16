@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handler
 
 import (
@@ -5,14 +19,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/pkg/task"
-
 	"github.com/go-openapi/strfmt"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/policy"
 	instanceModel "github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider"
+	"github.com/goharbor/harbor/src/pkg/task"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
-	"github.com/stretchr/testify/assert"
 )
 
 func Test_convertProvidersToFrontend(t *testing.T) {
@@ -320,11 +334,11 @@ func Test_convertExecutionToPayload(t *testing.T) {
 				EndTime:       time.Time{},
 			},
 			expect: &models.Execution{
-				EndTime:       "0001-01-01 00:00:00 +0000 UTC",
+				EndTime:       "0001-01-01T00:00:00Z",
 				ExtraAttrs:    nil,
 				ID:            1,
 				Metrics:       nil,
-				StartTime:     "0001-01-01 00:00:00 +0000 UTC",
+				StartTime:     "0001-01-01T00:00:00Z",
 				Status:        "",
 				StatusMessage: "",
 				Trigger:       "",
@@ -375,16 +389,16 @@ func Test_convertTaskToPayload(t *testing.T) {
 				EndTime:       time.Time{},
 			},
 			expect: &models.Task{
-				CreationTime:  "0001-01-01 00:00:00 +0000 UTC",
-				EndTime:       "0001-01-01 00:00:00 +0000 UTC",
+				CreationTime:  "0001-01-01T00:00:00Z",
+				EndTime:       "0001-01-01T00:00:00Z",
 				ExecutionID:   0,
 				ExtraAttrs:    nil,
 				ID:            0,
 				RunCount:      0,
-				StartTime:     "0001-01-01 00:00:00 +0000 UTC",
+				StartTime:     "0001-01-01T00:00:00Z",
 				Status:        "",
 				StatusMessage: "",
-				UpdateTime:    "0001-01-01 00:00:00 +0000 UTC",
+				UpdateTime:    "0001-01-01T00:00:00Z",
 			},
 		},
 	}

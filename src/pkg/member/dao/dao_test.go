@@ -15,19 +15,23 @@
 package dao
 
 import (
+	"database/sql"
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/common"
-	_ "github.com/goharbor/harbor/src/common/dao"
 	testDao "github.com/goharbor/harbor/src/common/dao"
-	comModels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/member/models"
 	"github.com/goharbor/harbor/src/pkg/project"
 	"github.com/goharbor/harbor/src/pkg/user"
+	userDao "github.com/goharbor/harbor/src/pkg/user/dao"
 	"github.com/goharbor/harbor/src/pkg/usergroup"
 	ugModel "github.com/goharbor/harbor/src/pkg/usergroup/model"
 	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/suite"
-	"testing"
 )
 
 type DaoTestSuite struct {
@@ -66,7 +70,7 @@ func (s *DaoTestSuite) SetupSuite() {
 		"delete from project_member where id > 1",
 	}
 	testDao.PrepareTestData(clearSqls, initSqls)
-	s.projectMgr = project.Mgr
+	s.projectMgr = pkg.ProjectMgr
 	s.userMgr = user.Mgr
 	ctx := s.Context()
 	proj, err := s.projectMgr.Get(ctx, "member_test_01")
@@ -125,9 +129,9 @@ func (s *DaoTestSuite) TestUpdateProjectMemberRole() {
 	proj, err := s.projectMgr.Get(ctx, "member_test_01")
 	s.Nil(err)
 	s.NotNil(proj)
-	user := comModels.User{
+	user := userDao.User{
 		Username: "pm_sample",
-		Email:    "pm_sample@example.com",
+		Email:    sql.NullString{String: "pm_sample@example.com", Valid: true},
 		Realname: "pm_sample",
 		Password: "1234567d",
 	}
@@ -264,6 +268,83 @@ func (s *DaoTestSuite) TestDeleteProjectMember() {
 	err = s.dao.DeleteProjectMemberByID(ctx, s.projectID, -1)
 	s.Nil(err)
 
+}
+
+func (s *DaoTestSuite) TestDeleteProjectMemberByUserId() {
+	ctx := s.Context()
+	userID := 22
+	var addMember = models.Member{
+		ProjectID:  s.projectID,
+		EntityID:   userID,
+		EntityType: common.UserMember,
+		Role:       common.RoleDeveloper,
+	}
+	pmid, err := s.dao.AddProjectMember(ctx, addMember)
+	s.Nil(err)
+	s.True(pmid > 0)
+
+	err = s.dao.DeleteProjectMemberByUserID(ctx, userID)
+	s.Nil(err)
+
+	queryMember := models.Member{ProjectID: s.projectID, EntityID: userID, EntityType: common.UserMember}
+
+	// not exist
+	members, err := s.dao.GetProjectMember(ctx, queryMember, nil)
+	s.True(len(members) == 0)
+	s.Nil(err)
+}
+
+func (s *DaoTestSuite) TestDeleteProjectMemberByProjectID() {
+	s.WithUser(func(userID int64, username string) {
+		proj2, err := s.projectMgr.Get(s.Context(), "member_test_02")
+		s.Nil(err)
+		s.NotNil(proj2)
+		var addMember = models.Member{
+			ProjectID:  proj2.ProjectID,
+			EntityID:   int(userID),
+			EntityType: common.UserMember,
+			Role:       common.RoleDeveloper,
+		}
+		pmid, err := s.dao.AddProjectMember(s.Context(), addMember)
+		s.Nil(err)
+		s.True(pmid > 0)
+
+		err = s.dao.DeleteProjectMemberByProjectID(s.Context(), proj2.ProjectID)
+		s.Nil(err)
+
+		queryMember := models.Member{ProjectID: proj2.ProjectID, EntityID: int(userID), EntityType: common.UserMember}
+
+		// not exist
+		members, err := s.dao.GetProjectMember(s.Context(), queryMember, nil)
+		s.True(len(members) == 0)
+		s.Nil(err)
+	}, "test_project_member_delete")
+}
+
+func (s *DaoTestSuite) WithUser(f func(int64, string), usernames ...string) {
+	var username string
+	if len(usernames) > 0 {
+		username = usernames[0]
+	} else {
+		username = s.RandString(5)
+	}
+
+	o, err := orm.FromContext(orm.Context())
+	if err != nil {
+		s.Fail("got error %v", err)
+	}
+
+	var userID int64
+
+	email := fmt.Sprintf("%s@example.com", username)
+	sql := "INSERT INTO harbor_user (username, realname, email, password) VALUES (?, ?, ?, 'Harbor12345') RETURNING user_id"
+	s.Nil(o.Raw(sql, username, username, email).QueryRow(&userID))
+
+	defer func() {
+		o.Raw("delete from harbor_user WHERE user_id = ?", userID).Exec()
+	}()
+
+	f(userID, username)
 }
 
 func TestDaoTestSuite(t *testing.T) {

@@ -17,17 +17,20 @@ package internal
 import (
 	"testing"
 
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
+	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
+	pkg "github.com/goharbor/harbor/src/pkg/artifact"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
 	scantesting "github.com/goharbor/harbor/src/testing/controller/scan"
 	ormtesting "github.com/goharbor/harbor/src/testing/lib/orm"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type AutoScanTestSuite struct {
@@ -65,9 +68,9 @@ func (suite *AutoScanTestSuite) TestGetProjectFailed() {
 }
 
 func (suite *AutoScanTestSuite) TestAutoScanDisabled() {
-	mock.OnAnything(suite.projectController, "Get").Return(&models.Project{
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
 		Metadata: map[string]string{
-			models.ProMetaAutoScan: "false",
+			proModels.ProMetaAutoScan: "false",
 		},
 	}, nil)
 
@@ -78,9 +81,9 @@ func (suite *AutoScanTestSuite) TestAutoScanDisabled() {
 }
 
 func (suite *AutoScanTestSuite) TestAutoScan() {
-	mock.OnAnything(suite.projectController, "Get").Return(&models.Project{
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
 		Metadata: map[string]string{
-			models.ProMetaAutoScan: "true",
+			proModels.ProMetaAutoScan: "true",
 		},
 	}, nil)
 
@@ -92,10 +95,38 @@ func (suite *AutoScanTestSuite) TestAutoScan() {
 	suite.Nil(autoScan(ctx, art))
 }
 
-func (suite *AutoScanTestSuite) TestAutoScanFailed() {
-	mock.OnAnything(suite.projectController, "Get").Return(&models.Project{
+func (suite *AutoScanTestSuite) TestAutoScanSBOM() {
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
 		Metadata: map[string]string{
-			models.ProMetaAutoScan: "true",
+			proModels.ProMetaAutoSBOMGen: "true",
+		},
+	}, nil)
+	suite.scanController.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	ctx := orm.NewContext(nil, &ormtesting.FakeOrmer{})
+	art := &artifact.Artifact{}
+
+	suite.Nil(autoGenSBOM(ctx, art))
+}
+
+func (suite *AutoScanTestSuite) TestAutoScanSBOMFalse() {
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
+		Metadata: map[string]string{
+			proModels.ProMetaAutoSBOMGen: "false",
+		},
+	}, nil)
+
+	suite.scanController.On("Scan", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+
+	ctx := orm.NewContext(nil, &ormtesting.FakeOrmer{})
+	art := &artifact.Artifact{}
+
+	suite.Nil(autoGenSBOM(ctx, art))
+}
+
+func (suite *AutoScanTestSuite) TestAutoScanFailed() {
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
+		Metadata: map[string]string{
+			proModels.ProMetaAutoScan: "true",
 		},
 	}, nil)
 
@@ -105,6 +136,23 @@ func (suite *AutoScanTestSuite) TestAutoScanFailed() {
 	art := &artifact.Artifact{}
 
 	suite.Error(autoScan(ctx, art))
+}
+
+func (suite *AutoScanTestSuite) TestWithArtifactEvent() {
+	mock.OnAnything(suite.projectController, "Get").Return(&proModels.Project{
+		Metadata: map[string]string{
+			proModels.ProMetaAutoScan: "true",
+		},
+	}, nil)
+
+	mock.OnAnything(suite.scanController, "Scan").Return(nil)
+
+	event := &event.ArtifactEvent{
+		Artifact: &pkg.Artifact{},
+	}
+
+	ctx := orm.NewContext(nil, &ormtesting.FakeOrmer{})
+	suite.Nil(autoScan(ctx, &artifact.Artifact{Artifact: *event.Artifact}, event.Tags...))
 }
 
 func TestAutoScanTestSuite(t *testing.T) {

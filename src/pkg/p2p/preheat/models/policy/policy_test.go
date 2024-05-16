@@ -17,7 +17,7 @@ package policy
 import (
 	"testing"
 
-	"github.com/astaxie/beego/validation"
+	"github.com/beego/beego/v2/core/validation"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -37,11 +37,35 @@ func TestPolicy(t *testing.T) {
 // SetupSuite prepares the env for PolicyTestSuite.
 func (p *PolicyTestSuite) SetupSuite() {
 	p.schema = &Schema{}
+	p.schema.Trigger = &Trigger{}
 }
 
 // TearDownSuite clears the env for PolicyTestSuite.
 func (p *PolicyTestSuite) TearDownSuite() {
 	p.schema = nil
+}
+
+// TestValidatePreheatPolicy tests the ValidatePreheatPolicy method
+func (p *PolicyTestSuite) TestValidatePreheatPolicy() {
+	// manual trigger
+	p.schema.Trigger.Type = TriggerTypeManual
+	p.NoError(p.schema.ValidatePreheatPolicy())
+
+	// event trigger
+	p.schema.Trigger.Type = TriggerTypeEventBased
+	p.NoError(p.schema.ValidatePreheatPolicy())
+
+	// scheduled trigger
+	p.schema.Trigger.Type = TriggerTypeScheduled
+	// cron string is empty
+	p.schema.Trigger.Settings.Cron = ""
+	p.NoError(p.schema.ValidatePreheatPolicy())
+	// the 1st field of cron string is not 0
+	p.schema.Trigger.Settings.Cron = "1 0 0 1 1 *"
+	p.Error(p.schema.ValidatePreheatPolicy())
+	// valid cron string
+	p.schema.Trigger.Settings.Cron = "0 0 0 1 1 *"
+	p.NoError(p.schema.ValidatePreheatPolicy())
 }
 
 // TestValid tests Valid method.
@@ -124,7 +148,7 @@ func (p *PolicyTestSuite) TestValid() {
 	require.Contains(p.T(), v.Errors[0].Error(), "invalid cron string for scheduled trigger")
 
 	// all is well
-	p.schema.Trigger.Settings.Cron = "0/12 * * * *"
+	p.schema.Trigger.Settings.Cron = "0/12 * * * * *"
 	v = &validation.Validation{}
 	p.schema.Valid(v)
 	require.False(p.T(), v.HasErrors(), "should return nil error")

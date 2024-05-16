@@ -1,30 +1,34 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package config
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/config/metadata"
+	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/config/store"
 	"github.com/goharbor/harbor/src/pkg/config/validate"
-	"os"
 )
 
 // CfgManager ... Configure Manager
@@ -47,7 +51,7 @@ func (c *CfgManager) LoadDefault() {
 				log.Errorf("LoadDefault failed, config item, key: %v,  err: %v", item.Name, err)
 				continue
 			}
-			c.Store.Set(item.Name, *cfgValue)
+			_ = c.Store.Set(item.Name, *cfgValue)
 		}
 	}
 }
@@ -64,7 +68,7 @@ func (c *CfgManager) LoadSystemConfigFromEnv() {
 					log.Errorf("LoadSystemConfigFromEnv failed, config item, key: %v,  err: %v", item.Name, err)
 					continue
 				}
-				c.Store.Set(item.Name, *configValue)
+				_ = c.Store.Set(item.Name, *configValue)
 			}
 		}
 	}
@@ -132,23 +136,23 @@ func (c *CfgManager) Save(ctx context.Context) error {
 }
 
 // Get ...
-func (c *CfgManager) Get(ctx context.Context, key string) *metadata.ConfigureValue {
+func (c *CfgManager) Get(_ context.Context, key string) *metadata.ConfigureValue {
 	configValue, err := c.Store.Get(key)
 	if err != nil {
-		log.Debugf("failed to get key %v, error: %v", key, err)
+		log.Debugf("failed to get key %v, error: %v, maybe default value not defined before get", key, err)
 		configValue = &metadata.ConfigureValue{}
 	}
 	return configValue
 }
 
 // Set ...
-func (c *CfgManager) Set(ctx context.Context, key string, value interface{}) {
+func (c *CfgManager) Set(_ context.Context, key string, value interface{}) {
 	configValue, err := metadata.NewCfgValue(key, utils.GetStrValueOfAnyType(value))
 	if err != nil {
 		log.Errorf("error when setting key: %v,  error %v", key, err)
 		return
 	}
-	c.Store.Set(key, *configValue)
+	_ = c.Store.Set(key, *configValue)
 }
 
 // GetDatabaseCfg - Get database configurations
@@ -157,14 +161,16 @@ func (c *CfgManager) GetDatabaseCfg() *models.Database {
 	return &models.Database{
 		Type: c.Get(ctx, common.DatabaseType).GetString(),
 		PostGreSQL: &models.PostGreSQL{
-			Host:         c.Get(ctx, common.PostGreSQLHOST).GetString(),
-			Port:         c.Get(ctx, common.PostGreSQLPort).GetInt(),
-			Username:     c.Get(ctx, common.PostGreSQLUsername).GetString(),
-			Password:     c.Get(ctx, common.PostGreSQLPassword).GetString(),
-			Database:     c.Get(ctx, common.PostGreSQLDatabase).GetString(),
-			SSLMode:      c.Get(ctx, common.PostGreSQLSSLMode).GetString(),
-			MaxIdleConns: c.Get(ctx, common.PostGreSQLMaxIdleConns).GetInt(),
-			MaxOpenConns: c.Get(ctx, common.PostGreSQLMaxOpenConns).GetInt(),
+			Host:            c.Get(ctx, common.PostGreSQLHOST).GetString(),
+			Port:            c.Get(ctx, common.PostGreSQLPort).GetInt(),
+			Username:        c.Get(ctx, common.PostGreSQLUsername).GetString(),
+			Password:        c.Get(ctx, common.PostGreSQLPassword).GetString(),
+			Database:        c.Get(ctx, common.PostGreSQLDatabase).GetString(),
+			SSLMode:         c.Get(ctx, common.PostGreSQLSSLMode).GetString(),
+			MaxIdleConns:    c.Get(ctx, common.PostGreSQLMaxIdleConns).GetInt(),
+			MaxOpenConns:    c.Get(ctx, common.PostGreSQLMaxOpenConns).GetInt(),
+			ConnMaxLifetime: c.Get(ctx, common.PostGreSQLConnMaxLifetime).GetDuration(),
+			ConnMaxIdleTime: c.Get(ctx, common.PostGreSQLConnMaxIdleTime).GetDuration(),
 		},
 	}
 }
@@ -177,10 +183,31 @@ func (c *CfgManager) UpdateConfig(ctx context.Context, cfgs map[string]interface
 // ValidateCfg validate config by metadata. return the first error if exist.
 func (c *CfgManager) ValidateCfg(ctx context.Context, cfgs map[string]interface{}) error {
 	for key, value := range cfgs {
+		item, exist := metadata.Instance().GetByName(key)
+		if !exist {
+			return fmt.Errorf("invalid config, item not defined in metadatalist, %v", key)
+		}
+		if item.Scope == metadata.SystemScope {
+			return fmt.Errorf("system config items cannot be updated, item: %v", key)
+		}
+
 		strVal := utils.GetStrValueOfAnyType(value)
+
+		// check storage per project before setting it
+		if key == common.StoragePerProject {
+			storagePerProject, err := strconv.ParseInt(strVal, 10, 64)
+			if err != nil {
+				return fmt.Errorf("cannot parse string value(%v) to int64", strVal)
+			}
+
+			if err := lib.ValidateQuotaLimit(storagePerProject); err != nil {
+				return err
+			}
+		}
+
 		_, err := metadata.NewCfgValue(key, strVal)
 		if err != nil {
-			return fmt.Errorf("%v, item name: %v", err, key)
+			return errors.Wrap(err, "item name "+key)
 		}
 	}
 

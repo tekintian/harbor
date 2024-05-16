@@ -17,11 +17,12 @@ package metadata
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	event2 "github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/pkg/notifier/event"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
-	"github.com/stretchr/testify/suite"
 )
 
 type scanEventTestSuite struct {
@@ -43,6 +44,48 @@ func (r *scanEventTestSuite) TestResolveOfScanImageEventMetadata() {
 	err := metadata.Resolve(e)
 	r.Require().Nil(err)
 	r.Equal(event2.TopicScanningCompleted, e.Topic)
+	r.Require().NotNil(e.Data)
+	data, ok := e.Data.(*event2.ScanImageEvent)
+	r.Require().True(ok)
+	r.Equal("library/hello-world", data.Artifact.Repository)
+}
+
+func (r *scanEventTestSuite) TestResolveOfStopScanImageEventMetadata() {
+	e := &event.Event{}
+	metadata := &ScanImageMetaData{
+		Artifact: &v1.Artifact{
+			NamespaceID: 0,
+			Repository:  "library/hello-world",
+			Tag:         "latest",
+			Digest:      "sha256:absdfd87123",
+			MimeType:    "docker.chart",
+		},
+		Status: job.StoppedStatus.String(),
+	}
+	err := metadata.Resolve(e)
+	r.Require().Nil(err)
+	r.Equal(event2.TopicScanningStopped, e.Topic)
+	r.Require().NotNil(e.Data)
+	data, ok := e.Data.(*event2.ScanImageEvent)
+	r.Require().True(ok)
+	r.Equal("library/hello-world", data.Artifact.Repository)
+}
+
+func (r *scanEventTestSuite) TestResolveOfFailedScanImageEventMetadata() {
+	e := &event.Event{}
+	metadata := &ScanImageMetaData{
+		Artifact: &v1.Artifact{
+			NamespaceID: 0,
+			Repository:  "library/hello-world",
+			Tag:         "latest",
+			Digest:      "sha256:absdfd87123",
+			MimeType:    "docker.chart",
+		},
+		Status: job.ErrorStatus.String(),
+	}
+	err := metadata.Resolve(e)
+	r.Require().Nil(err)
+	r.Equal(event2.TopicScanningFailed, e.Topic)
 	r.Require().NotNil(e.Data)
 	data, ok := e.Data.(*event2.ScanImageEvent)
 	r.Require().True(ok)

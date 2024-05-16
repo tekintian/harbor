@@ -17,11 +17,12 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
+	commonmodels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
-	"github.com/goharbor/harbor/src/pkg/user/models"
 	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/suite"
 )
 
 type DaoTestSuite struct {
@@ -48,7 +49,7 @@ func (suite *DaoTestSuite) TestCount() {
 
 		n, err := suite.dao.Count(ctx, nil)
 		suite.Nil(err)
-		id, err := suite.dao.Create(ctx, &models.User{
+		id, err := suite.dao.Create(ctx, &commonmodels.User{
 			Username:        "testuser2",
 			Realname:        "user test",
 			Email:           "testuser@test.com",
@@ -60,7 +61,7 @@ func (suite *DaoTestSuite) TestCount() {
 		n2, err := suite.dao.Count(ctx, nil)
 		suite.Nil(err)
 		suite.Equal(n+1, n2)
-		err2 := suite.dao.Update(ctx, &models.User{
+		err2 := suite.dao.Update(ctx, &commonmodels.User{
 			UserID:  id,
 			Deleted: true,
 		})
@@ -74,28 +75,54 @@ func (suite *DaoTestSuite) TestCount() {
 }
 
 func (suite *DaoTestSuite) TestList() {
+	ctx := orm.Context()
 	{
-		users, err := suite.dao.List(orm.Context(), q.New(q.KeyWords{"user_id": 1}))
+		users, err := suite.dao.List(ctx, q.New(q.KeyWords{"user_id": 1}))
 		suite.Nil(err)
 		suite.Len(users, 1)
 	}
 
 	{
-		users, err := suite.dao.List(orm.Context(), q.New(q.KeyWords{"username": "admin"}))
+		users, err := suite.dao.List(ctx, q.New(q.KeyWords{"username": "admin"}))
 		suite.Nil(err)
 		suite.Len(users, 1)
 	}
+	id, err := suite.dao.Create(ctx, &commonmodels.User{
+		Username:        "list_test",
+		Realname:        "list test",
+		Email:           "list_test@test.com",
+		Password:        "somepassword",
+		PasswordVersion: "sha256",
+	})
+	suite.appendClearSQL(id)
+	suite.Nil(err)
+	{
+		users, err := suite.dao.List(ctx, q.New(q.KeyWords{"username_or_email": "list_test"}))
+		suite.Nil(err)
+		suite.Len(users, 1)
+	}
+	{
+		users, err := suite.dao.List(ctx, q.New(q.KeyWords{"username_or_email": "list_test@test.com"}))
+		suite.Nil(err)
+		suite.Len(users, 1)
+	}
+	{
+		users, err := suite.dao.List(ctx, q.New(q.KeyWords{"username_or_email": "noremail_norusername"}))
+		suite.Nil(err)
+		suite.Len(users, 0)
+	}
+
 }
 
 func (suite *DaoTestSuite) TestCreate() {
 	cases := []struct {
 		name     string
-		input    *models.User
+		input    *commonmodels.User
 		hasError bool
 	}{
 		{
 			name: "create with user ID",
-			input: &models.User{
+			input: &commonmodels.User{
 				UserID:          3,
 				Username:        "testuser",
 				Realname:        "user test",
@@ -107,10 +134,32 @@ func (suite *DaoTestSuite) TestCreate() {
 		},
 		{
 			name: "create without user ID",
-			input: &models.User{
+			input: &commonmodels.User{
 				Username:        "testuser",
 				Realname:        "user test",
 				Email:           "testuser@test.com",
+				Password:        "somepassword",
+				PasswordVersion: "sha256",
+			},
+			hasError: false,
+		},
+		{
+			name: "create with empty email_1",
+			input: &commonmodels.User{
+				Username:        "emptyemail1",
+				Realname:        "empty test",
+				Email:           "",
+				Password:        "somepassword",
+				PasswordVersion: "sha256",
+			},
+			hasError: false,
+		},
+		{
+			name: "create with empty email_2",
+			input: &commonmodels.User{
+				Username:        "emptyemail2",
+				Realname:        "empty test2",
+				Email:           "",
 				Password:        "somepassword",
 				PasswordVersion: "sha256",
 			},

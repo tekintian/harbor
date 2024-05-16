@@ -13,9 +13,7 @@ from utils.jobservice import prepare_job_service
 from utils.registry import prepare_registry
 from utils.registry_ctl import prepare_registry_ctl
 from utils.core import prepare_core
-from utils.notary import prepare_notary
 from utils.log import prepare_log_configs
-from utils.chart import prepare_chartmuseum
 from utils.docker_compose import prepare_docker_compose
 from utils.nginx import prepare_nginx, nginx_confd_dir
 from utils.redis import prepare_redis
@@ -28,15 +26,13 @@ old_private_key_pem_path, old_crt_path)
 
 @click.command()
 @click.option('--conf', default=input_config_path, help="the path of Harbor configuration file")
-@click.option('--with-notary', is_flag=True, help="the Harbor instance is to be deployed with notary")
 @click.option('--with-trivy', is_flag=True, help="the Harbor instance is to be deployed with Trivy")
-@click.option('--with-chartmuseum', is_flag=True, help="the Harbor instance is to be deployed with chart repository supporting")
-def prepare(conf, with_notary, with_trivy, with_chartmuseum):
+def prepare(conf, with_trivy):
 
     delfile(config_dir)
-    config_dict = parse_yaml_config(conf, with_notary=with_notary, with_trivy=with_trivy, with_chartmuseum=with_chartmuseum)
+    config_dict = parse_yaml_config(conf, with_trivy=with_trivy)
     try:
-        validate(config_dict, notary_mode=with_notary)
+        validate(config_dict)
     except Exception as e:
         click.echo('Error happened in config validation...')
         logging.error(e)
@@ -45,7 +41,7 @@ def prepare(conf, with_notary, with_trivy, with_chartmuseum):
     prepare_portal(config_dict)
     prepare_log_configs(config_dict)
     prepare_nginx(config_dict)
-    prepare_core(config_dict, with_notary=with_notary, with_trivy=with_trivy, with_chartmuseum=with_chartmuseum)
+    prepare_core(config_dict, with_trivy=with_trivy)
     prepare_registry(config_dict)
     prepare_registry_ctl(config_dict)
     prepare_db(config_dict)
@@ -66,13 +62,7 @@ def prepare(conf, with_notary, with_trivy, with_chartmuseum):
     if config_dict['metric'].enabled:
         prepare_exporter(config_dict)
 
-    if with_notary:
-        prepare_notary(config_dict, nginx_confd_dir, SSL_CERT_PATH, SSL_CERT_KEY_PATH)
-
     if with_trivy:
         prepare_trivy_adapter(config_dict)
 
-    if with_chartmuseum:
-        prepare_chartmuseum(config_dict)
-
-    prepare_docker_compose(config_dict, with_trivy, with_notary, with_chartmuseum)
+    prepare_docker_compose(config_dict, with_trivy)

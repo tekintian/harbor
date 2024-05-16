@@ -16,14 +16,15 @@ package ldap
 
 import (
 	"context"
+	"os"
+	"reflect"
+	"testing"
+
 	goldap "github.com/go-ldap/ldap/v3"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/lib/config/models"
 	"github.com/goharbor/harbor/src/pkg/ldap/model"
-	"github.com/stretchr/testify/assert"
-	"reflect"
-
-	"os"
-	"testing"
 )
 
 var ldapCfg = models.LdapConf{
@@ -102,7 +103,7 @@ func TestFormatURL(t *testing.T) {
 		{"ldaps://127.0.0.1:389", "ldaps://127.0.0.1:389"},
 		{"ldap://127.0.0.1:636", "ldaps://127.0.0.1:636"},
 		{"112.122.122.122", "ldap://112.122.122.122:389"},
-		{"ldap:\\wrong url", ""},
+		{"ldap://[2001:db8::1]:389", "ldap://[2001:db8::1]:389"},
 	}
 
 	for _, u := range urls {

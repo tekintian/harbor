@@ -1,18 +1,19 @@
 package immutable
 
 import (
-	"github.com/goharbor/harbor/src/lib/orm"
-	"github.com/goharbor/harbor/src/lib/q"
 	"testing"
 
-	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/common/utils/test"
-	"github.com/goharbor/harbor/src/pkg/immutable/model"
-	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/common/utils/test"
+	"github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
+	"github.com/goharbor/harbor/src/pkg/immutable/model"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	htesting "github.com/goharbor/harbor/src/testing"
 )
 
 type ControllerTestSuite struct {
@@ -37,13 +38,14 @@ func (s *ControllerTestSuite) SetupSuite() {
 func (s *ControllerTestSuite) TestImmutableRule() {
 
 	var err error
+	ctx := s.Context()
 
-	projectID, err := dao.AddProject(models.Project{
-		Name:    "TestImmutableRule",
+	projectID, err := pkg.ProjectMgr.Create(ctx, &proModels.Project{
+		Name:    "testimmutablerule",
 		OwnerID: 1,
 	})
 	if s.Nil(err) {
-		defer dao.DeleteProject(projectID)
+		defer pkg.ProjectMgr.Delete(ctx, projectID)
 	}
 
 	rule := &model.Metadata{

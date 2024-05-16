@@ -18,12 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/pkg/retention/policy"
 	"time"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
+	"github.com/go-openapi/strfmt"
+
+	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/retention/dao"
 	"github.com/goharbor/harbor/src/pkg/retention/dao/models"
+	"github.com/goharbor/harbor/src/pkg/retention/policy"
 )
 
 // Manager defines operations of managing policy
@@ -38,6 +42,8 @@ type Manager interface {
 	DeletePolicy(ctx context.Context, id int64) error
 	// Get the specified policy
 	GetPolicy(ctx context.Context, id int64) (*policy.Metadata, error)
+	// List the retention policy with query conditions
+	ListPolicyIDs(ctx context.Context, query *q.Query) ([]int64, error)
 }
 
 // DefaultManager ...
@@ -91,7 +97,26 @@ func (d *DefaultManager) GetPolicy(ctx context.Context, id int64) (*policy.Metad
 		return nil, err
 	}
 	p.ID = id
+	if p.Trigger.Kind == policy.TriggerKindSchedule {
+		cron, ok := p.Trigger.Settings[policy.TriggerSettingsCron]
+		if ok && len(cron.(string)) > 0 {
+			p.Trigger.Settings[policy.TriggerSettingNextScheduledTime] = strfmt.DateTime(utils.NextSchedule(cron.(string), time.Now()))
+		}
+	}
 	return p, nil
+}
+
+// ListPolicyIDs list policy id by query
+func (d *DefaultManager) ListPolicyIDs(ctx context.Context, query *q.Query) ([]int64, error) {
+	policyIDs := make([]int64, 0)
+	plcs, err := dao.ListPolicies(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range plcs {
+		policyIDs = append(policyIDs, p.ID)
+	}
+	return policyIDs, nil
 }
 
 // NewManager ...

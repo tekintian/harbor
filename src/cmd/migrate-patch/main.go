@@ -1,12 +1,27 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
 	"database/sql"
 	"flag"
-	_ "github.com/lib/pq"
 	"log"
 	"strings"
 	"time"
+
+	_ "github.com/jackc/pgx/v4/stdlib" // registry pgx driver
 )
 
 var dbURL string
@@ -28,26 +43,28 @@ func main() {
 	if !strings.HasPrefix(dbURL, "postgres://") {
 		log.Fatalf("Invalid URL: '%s'\n", dbURL)
 	}
-	db, err := sql.Open("postgres", dbURL)
+	db, err := sql.Open("pgx", dbURL)
 	if err != nil {
 		log.Fatalf("Failed to connect to Database, error: %v\n", err)
 	}
 	defer db.Close()
-	c := make(chan struct{}, 1)
+
+	c := make(chan struct{})
 	go func() {
+		defer close(c)
+
 		err := db.Ping()
 		for ; err != nil; err = db.Ping() {
 			log.Println("Failed to Ping DB, sleep for 1 second.")
 			time.Sleep(1 * time.Second)
 		}
-		c <- struct{}{}
 	}()
 	select {
 	case <-c:
 	case <-time.After(30 * time.Second):
 		log.Fatal("Failed to connect DB after 30 seconds, time out. \n")
-
 	}
+
 	row := db.QueryRow(pgSQLCheckColStmt)
 	var tblCount, colCount int
 	if err := row.Scan(&tblCount, &colCount); err != nil {

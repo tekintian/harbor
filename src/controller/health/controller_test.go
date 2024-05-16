@@ -1,10 +1,10 @@
-// Copyright 2019 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+//	  http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,8 +18,9 @@ import (
 	"testing"
 
 	"github.com/docker/distribution/health"
-	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
 func fakeHealthChecker(healthy bool) health.Checker {

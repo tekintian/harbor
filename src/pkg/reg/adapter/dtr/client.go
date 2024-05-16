@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package dtr
 
 import (
@@ -5,17 +19,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 
 	common_http "github.com/goharbor/harbor/src/common/http"
-
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/goharbor/harbor/src/pkg/reg/util"
 )
 
 // Client is a client to interact with DTR
@@ -28,14 +40,13 @@ type Client struct {
 
 // NewClient creates a new DTR client.
 func NewClient(registry *model.Registry) *Client {
-
 	client := &Client{
 		url:      registry.URL,
 		username: registry.Credential.AccessKey,
 		password: registry.Credential.AccessSecret,
 		client: common_http.NewClient(
 			&http.Client{
-				Transport: util.GetHTTPTransport(registry.Insecure),
+				Transport: common_http.GetHTTPTransport(common_http.WithInsecure(registry.Insecure)),
 			}),
 	}
 	return client
@@ -69,7 +80,7 @@ func (c *Client) getAndIteratePagination(endpoint string, v interface{}) error {
 			return err
 		}
 		defer resp.Body.Close()
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}
@@ -120,7 +131,7 @@ func (c *Client) getRepositories() ([]*model.Repository, error) {
 			return nil, err
 		}
 		defer resp.Body.Close()
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +212,7 @@ func (c *Client) getNamespaces() ([]Account, error) {
 			return nil, err
 		}
 		defer resp.Body.Close()
-		data, err := ioutil.ReadAll(resp.Body)
+		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -273,7 +284,7 @@ func (c *Client) createRepository(repository string) error {
 		return nil
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -316,7 +327,7 @@ func (c *Client) createNamespace(namespace string) error {
 		return nil
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}

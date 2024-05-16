@@ -16,12 +16,17 @@ package report
 
 import (
 	"context"
-	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scan"
-	"github.com/google/uuid"
+)
+
+var (
+	// Mgr is the global report manager
+	Mgr = NewManager()
 )
 
 // Manager is used to manage the scan reports.
@@ -96,11 +101,12 @@ type Manager interface {
 	//    []*scan.Report : report list
 	//    error        : non nil error if any errors occurred
 	List(ctx context.Context, query *q.Query) ([]*scan.Report, error)
-}
 
-const (
-	reportTimeout = 1 * time.Hour
-)
+	// Update update report information
+	Update(ctx context.Context, r *scan.Report, cols ...string) error
+	// DeleteByExtraAttr delete scan_report by sbom_digest
+	DeleteByExtraAttr(ctx context.Context, mimeType, attrName, attrValue string) error
+}
 
 // basicManager is a default implementation of report manager.
 type basicManager struct {
@@ -217,4 +223,12 @@ func (bm *basicManager) DeleteByDigests(ctx context.Context, digests ...string) 
 
 func (bm *basicManager) List(ctx context.Context, query *q.Query) ([]*scan.Report, error) {
 	return bm.dao.List(ctx, query)
+}
+
+func (bm *basicManager) Update(ctx context.Context, r *scan.Report, cols ...string) error {
+	return bm.dao.Update(ctx, r, cols...)
+}
+
+func (bm *basicManager) DeleteByExtraAttr(ctx context.Context, mimeType, attrName, attrValue string) error {
+	return bm.dao.DeleteByExtraAttr(ctx, mimeType, attrName, attrValue)
 }

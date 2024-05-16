@@ -22,21 +22,20 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/go-openapi/runtime"
+	"github.com/go-openapi/runtime/middleware"
+
+	"github.com/goharbor/harbor/src/common/rbac"
 	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"github.com/goharbor/harbor/src/common/rbac/system"
-
-	"github.com/go-openapi/runtime"
-	"github.com/goharbor/harbor/src/lib"
-	"github.com/goharbor/harbor/src/lib/errors"
-	lib_http "github.com/goharbor/harbor/src/lib/http"
-	"github.com/goharbor/harbor/src/lib/q"
-
-	"github.com/go-openapi/runtime/middleware"
-	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/controller/project"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/errors"
+	lib_http "github.com/goharbor/harbor/src/lib/http"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/lib/q"
 )
 
 var (
@@ -47,12 +46,12 @@ var (
 type BaseAPI struct{}
 
 // Prepare default prepare for operation
-func (*BaseAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (*BaseAPI) Prepare(_ context.Context, _ string, _ interface{}) middleware.Responder {
 	return nil
 }
 
 // SendError returns response for the err
-func (*BaseAPI) SendError(ctx context.Context, err error) middleware.Responder {
+func (*BaseAPI) SendError(_ context.Context, err error) middleware.Responder {
 	return NewErrResponder(err)
 }
 
@@ -86,7 +85,11 @@ func (b *BaseAPI) HasProjectPermission(ctx context.Context, projectIDOrName inte
 		p, err := baseProjectCtl.GetByName(ctx, projectName)
 		if err != nil {
 			log.Errorf("failed to get project %s: %v", projectName, err)
-			return false
+			if errors.IsNotFoundErr(err) {
+				p = &project.Project{}
+			} else {
+				return false
+			}
 		}
 		if p == nil {
 			log.Warningf("project %s not found", projectName)
@@ -154,7 +157,7 @@ func (b *BaseAPI) RequireSolutionUserAccess(ctx context.Context) error {
 }
 
 // BuildQuery builds the query model according to the query string
-func (b *BaseAPI) BuildQuery(ctx context.Context, query, sort *string, pageNumber, pageSize *int64) (*q.Query, error) {
+func (b *BaseAPI) BuildQuery(_ context.Context, query, sort *string, pageNumber, pageSize *int64) (*q.Query, error) {
 	var (
 		qs string
 		st string
@@ -177,7 +180,7 @@ func (b *BaseAPI) BuildQuery(ctx context.Context, query, sort *string, pageNumbe
 }
 
 // Links return Links based on the provided pagination information
-func (b *BaseAPI) Links(ctx context.Context, u *url.URL, total, pageNumber, pageSize int64) lib.Links {
+func (b *BaseAPI) Links(_ context.Context, u *url.URL, total, pageNumber, pageSize int64) lib.Links {
 	var links lib.Links
 	if pageSize == 0 {
 		return links
@@ -232,7 +235,7 @@ type ErrResponder struct {
 }
 
 // WriteResponse ...
-func (r *ErrResponder) WriteResponse(rw http.ResponseWriter, producer runtime.Producer) {
+func (r *ErrResponder) WriteResponse(rw http.ResponseWriter, _ runtime.Producer) {
 	lib_http.SendError(rw, r.err)
 }
 

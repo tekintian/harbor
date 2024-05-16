@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package dockerhub
 
 import (
@@ -5,7 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 
@@ -13,6 +27,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
+	"github.com/goharbor/harbor/src/pkg/reg/filter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/pkg/reg/util"
 )
@@ -90,6 +105,7 @@ func (a *adapter) Info() (*model.RegistryInfo, error) {
 			model.TriggerTypeManual,
 			model.TriggerTypeScheduled,
 		},
+		SupportedRepositoryPathComponentType: model.RepositoryPathComponentTypeOnlyTwo,
 	}, nil
 }
 
@@ -149,7 +165,7 @@ func (a *adapter) listNamespaces() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +213,7 @@ func (a *adapter) CreateNamespace(namespace *model.Namespace) error {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -218,7 +234,7 @@ func (a *adapter) getNamespace(namespace string) (*model.Namespace, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -241,10 +257,6 @@ func (a *adapter) getNamespace(namespace string) (*model.Namespace, error) {
 func (a *adapter) FetchArtifacts(filters []*model.Filter) ([]*model.Resource, error) {
 	var repos []Repo
 	nameFilter, err := a.getStringFilterValue(model.FilterTypeName, filters)
-	if err != nil {
-		return nil, err
-	}
-	tagFilter, err := a.getStringFilterValue(model.FilterTypeTag, filters)
 	if err != nil {
 		return nil, err
 	}
@@ -304,17 +316,6 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) ([]*model.Resource, er
 					return fmt.Errorf("get tags for repo '%s/%s' from DockerHub error: %v", repo.Namespace, repo.Name, err)
 				}
 				for _, t := range pageTags.Tags {
-					// If tag filter set, skip tags that don't match the filter pattern.
-					if len(tagFilter) != 0 {
-						m, err := util.Match(tagFilter, t.Name)
-						if err != nil {
-							return fmt.Errorf("match tag name '%s' against pattern '%s' error: %v", t.Name, tagFilter, err)
-						}
-
-						if !m {
-							continue
-						}
-					}
 					tags = append(tags, t.Name)
 				}
 
@@ -322,6 +323,17 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) ([]*model.Resource, er
 					break
 				}
 				page++
+			}
+
+			var artifacts []*model.Artifact
+			for _, tag := range tags {
+				artifacts = append(artifacts, &model.Artifact{
+					Tags: []string{tag},
+				})
+			}
+			filterArtifacts, err := filter.DoFilterArtifacts(artifacts, filters)
+			if err != nil {
+				return err
 			}
 
 			if len(tags) > 0 {
@@ -332,7 +344,7 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) ([]*model.Resource, er
 						Repository: &model.Repository{
 							Name: name,
 						},
-						Vtags: tags,
+						Artifacts: filterArtifacts,
 					},
 				}
 			}
@@ -381,8 +393,9 @@ func (a *adapter) DeleteManifest(repository, reference string) error {
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -403,7 +416,7 @@ func (a *adapter) getRepos(namespace, name string, page, pageSize int) (*ReposRe
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +443,7 @@ func (a *adapter) getTags(namespace, repo string, page, pageSize int) (*TagsResp
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +462,7 @@ func (a *adapter) getTags(namespace, repo string, page, pageSize int) (*TagsResp
 	return tags, nil
 }
 
-// getFilter gets specific type filter value from filters list.
+// getStringFilterValue gets specific type filter value from filters list.
 func (a *adapter) getStringFilterValue(filterType string, filters []*model.Filter) (string, error) {
 	for _, f := range filters {
 		if f.Type == filterType {

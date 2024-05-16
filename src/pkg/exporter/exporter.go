@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package exporter
 
 import (
@@ -33,10 +47,13 @@ func NewExporter(opt *Opt) *Exporter {
 	if opt.CacheDuration > 0 {
 		CacheInit(opt)
 	}
-	exporter.RegisterCollector(NewHealthCollect(hbrCli),
+	err := exporter.RegisterCollector(NewHealthCollect(hbrCli),
 		NewSystemInfoCollector(hbrCli),
 		NewProjectCollector(),
 		NewJobServiceCollector())
+	if err != nil {
+		log.Warningf("calling RegisterCollector() errored out, error: %v", err)
+	}
 
 	r := prometheus.NewRegistry()
 	r.MustRegister(exporter)
@@ -65,11 +82,11 @@ func (e *Exporter) RegisterCollector(collectors ...collector) error {
 	return nil
 }
 
-func newServer(opt *Opt, r *prometheus.Registry) *http.Server {
+func newServer(opt *Opt, _ *prometheus.Registry) *http.Server {
 	exporterMux := http.NewServeMux()
 	exporterMux.Handle(opt.MetricsPath, promhttp.Handler())
 	exporterMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html>
+		_, _ = w.Write([]byte(`<html>
 		<head><title>Harbor Exporter</title></head>
 		<body>
 		<h1>Harbor Exporter</h1>

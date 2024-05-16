@@ -17,18 +17,18 @@ package preheat
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"strings"
 
 	tk "github.com/docker/distribution/registry/auth/token"
-	"github.com/goharbor/harbor/src/common/models"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/scan"
-	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/core/service/token"
 	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
@@ -40,16 +40,10 @@ import (
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/policy"
 	pr "github.com/goharbor/harbor/src/pkg/p2p/preheat/provider"
-	"github.com/goharbor/harbor/src/pkg/scan/report"
-	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/scan/vuln"
 	"github.com/goharbor/harbor/src/pkg/task"
 )
-
-func init() {
-	// keep only the latest created 50 p2p preheat execution records
-	task.SetExecutionSweeperCount(job.P2PPreheat, 50)
-}
 
 const (
 	defaultSeverityCode     = 99
@@ -108,7 +102,7 @@ type extURLGetter func(c *selector.Candidate) (string, error)
 
 // accessCredMaker is a func template to generate the required credential header value
 // The purpose of defining such a func template is decoupling code
-type accessCredMaker func(c *selector.Candidate) (string, error)
+type accessCredMaker func(ctx context.Context, c *selector.Candidate) (string, error)
 
 // matchedPolicy is a temporary intermediary struct for passing parameters
 type matchedPolicy struct {
@@ -161,7 +155,7 @@ func NewEnforcer() Enforcer {
 			r := fmt.Sprintf("%s/%s", c.Namespace, c.Repository)
 			return fmt.Sprintf(manifestAPIPattern, edp, r, c.Tags[0]), nil
 		},
-		credMaker: func(c *selector.Candidate) (s string, e error) {
+		credMaker: func(ctx context.Context, c *selector.Candidate) (s string, e error) {
 			r := fmt.Sprintf("%s/%s", c.Namespace, c.Repository)
 
 			ac := []*tk.ResourceActions{
@@ -172,7 +166,7 @@ func NewEnforcer() Enforcer {
 					Actions: []string{resourcePullAction},
 				},
 			}
-			t, err := token.MakeToken(orm.Context(), "distributor", token.Registry, ac)
+			t, err := token.MakeToken(ctx, "distributor", token.Registry, ac)
 			if err != nil {
 				return "", err
 			}
@@ -346,7 +340,7 @@ func (de *defaultEnforcer) PreheatArtifact(ctx context.Context, art *artifact.Ar
 }
 
 // getCandidates get the initial candidates by evaluating the policy
-func (de *defaultEnforcer) getCandidates(ctx context.Context, ps *pol.Schema, p *models.Project) ([]*selector.Candidate, error) {
+func (de *defaultEnforcer) getCandidates(ctx context.Context, ps *pol.Schema, p *proModels.Project) ([]*selector.Candidate, error) {
 	// Get the initial candidates
 	// Here we have a hidden filter, the artifact type filter.
 	// Only get the image type at this moment.
@@ -358,9 +352,6 @@ func (de *defaultEnforcer) getCandidates(ctx context.Context, ps *pol.Schema, p 
 	}, &artifact.Option{
 		WithLabel: true,
 		WithTag:   true,
-		TagOption: &tag.Option{
-			WithSignature: true,
-		},
 	})
 	if err != nil {
 		return nil, err
@@ -383,7 +374,7 @@ func (de *defaultEnforcer) launchExecutions(ctx context.Context, candidates []*s
 		attrs[extraAttrTriggerSetting] = "-"
 	}
 
-	eid, err := de.executionMgr.Create(ctx, job.P2PPreheat, pl.ID, pl.Trigger.Type, attrs)
+	eid, err := de.executionMgr.Create(ctx, job.P2PPreheatVendorType, pl.ID, pl.Trigger.Type, attrs)
 	if err != nil {
 		return -1, err
 	}
@@ -436,7 +427,7 @@ func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, can
 		return -1, err
 	}
 
-	cred, err := de.credMaker(candidate)
+	cred, err := de.credMaker(ctx, candidate)
 	if err != nil {
 		return -1, err
 	}
@@ -458,7 +449,7 @@ func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, can
 	}
 
 	j := &task.Job{
-		Name: job.P2PPreheat,
+		Name: job.P2PPreheatVendorType,
 		Parameters: job.Parameters{
 			preheat.PreheatParamProvider: instance,
 			preheat.PreheatParamImage:    piData,
@@ -482,9 +473,8 @@ func (de *defaultEnforcer) startTask(ctx context.Context, executionID int64, can
 }
 
 // getVulnerabilitySev gets the severity code value for the given artifact with allowlist option set
-func (de *defaultEnforcer) getVulnerabilitySev(ctx context.Context, p *models.Project, art *artifact.Artifact) (uint, error) {
-	al := p.CVEAllowlist.CVESet()
-	r, err := de.scanCtl.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport}, report.WithCVEAllowlist(&al))
+func (de *defaultEnforcer) getVulnerabilitySev(ctx context.Context, p *proModels.Project, art *artifact.Artifact) (uint, error) {
+	vulnerable, err := de.scanCtl.GetVulnerable(ctx, art, p.CVEAllowlist.CVESet(), p.CVEAllowlist.IsExpired())
 	if err != nil {
 		if errors.IsNotFoundErr(err) {
 			// no vulnerability report
@@ -494,29 +484,21 @@ func (de *defaultEnforcer) getVulnerabilitySev(ctx context.Context, p *models.Pr
 		return defaultSeverityCode, errors.Wrap(err, "get vulnerability severity")
 	}
 
-	// Severity is based on the native report format or the generic vulnerability report format.
-	// In case no supported report format, treat as same to the no report scenario
-	sum, ok := r[v1.MimeTypeNativeReport]
-	if !ok {
-		// check if a report with MimeTypeGenericVulnerabilityReport is present.
-		// return the default severity code only if it does not exist
-		sum, ok = r[v1.MimeTypeGenericVulnerabilityReport]
-		if !ok {
-			return defaultSeverityCode, nil
-		}
-
+	if !vulnerable.IsScanSuccess() {
+		// scan status may running or error
+		return defaultSeverityCode, nil
 	}
 
-	sm, ok := sum.(*vuln.NativeReportSummary)
-	if !ok {
-		return defaultSeverityCode, errors.New("malformed native summary report")
+	// no vulnerability found
+	if vulnerable.Severity == nil {
+		return (uint)(vuln.None.Code()), nil
 	}
 
-	return (uint)(sm.Severity.Code()), nil
+	return (uint)(vulnerable.Severity.Code()), nil
 }
 
 // toCandidates converts the artifacts to filtering candidates
-func (de *defaultEnforcer) toCandidates(ctx context.Context, p *models.Project, arts []*artifact.Artifact) ([]*selector.Candidate, error) {
+func (de *defaultEnforcer) toCandidates(ctx context.Context, p *proModels.Project, arts []*artifact.Artifact) ([]*selector.Candidate, error) {
 	// Convert to filtering candidates first
 	candidates := make([]*selector.Candidate, 0)
 
@@ -531,16 +513,13 @@ func (de *defaultEnforcer) toCandidates(ctx context.Context, p *models.Project, 
 		// TODO: Do we need to support untagged artifacts here?
 		for _, t := range a.Tags {
 			candidates = append(candidates, &selector.Candidate{
-				NamespaceID: p.ProjectID,
-				Namespace:   p.Name,
-				Repository:  pureRepository(p.Name, a.RepositoryName),
-				Kind:        pr.SupportedType,
-				Digest:      a.Digest,
-				Tags:        []string{t.Name},
-				Labels:      getLabels(a.Labels),
-				Signatures: map[string]bool{
-					t.Name: t.Signed,
-				},
+				NamespaceID:           p.ProjectID,
+				Namespace:             p.Name,
+				Repository:            pureRepository(p.Name, a.RepositoryName),
+				Kind:                  pr.SupportedType,
+				Digest:                a.Digest,
+				Tags:                  []string{t.Name},
+				Labels:                getLabels(a.Labels),
 				VulnerabilitySeverity: sev,
 			})
 		}
@@ -550,7 +529,7 @@ func (de *defaultEnforcer) toCandidates(ctx context.Context, p *models.Project, 
 }
 
 // getProject gets the full metadata of the specified project
-func (de *defaultEnforcer) getProject(ctx context.Context, id int64) (*models.Project, error) {
+func (de *defaultEnforcer) getProject(ctx context.Context, id int64) (*proModels.Project, error) {
 	// Get project info with CVE allow list and metadata
 	return de.proCtl.Get(ctx, id, project.WithEffectCVEAllowlist())
 }
@@ -610,7 +589,7 @@ func checkProviderHealthy(inst *provider.Instance) error {
 // Check the project security settings and override the related settings in the policy if necessary.
 // NOTES: if the security settings (relevant with signature and vulnerability) are set at the project configuration,
 // the corresponding filters of P2P preheat policy will be set using the relevant settings of project configurations.
-func overrideSecuritySettings(p *pol.Schema, pro *models.Project) [][]interface{} {
+func overrideSecuritySettings(p *pol.Schema, pro *proModels.Project) [][]interface{} {
 	if p == nil || pro == nil {
 		return nil
 	}
@@ -637,7 +616,8 @@ func overrideSecuritySettings(p *pol.Schema, pro *models.Project) [][]interface{
 	// Append vulnerability filter if vulnerability severity config is set at project configurations
 	if v, ok := pro.Metadata[proMetaKeyVulnerability]; ok && v == "true" {
 		if se, ok := pro.Metadata[proMetaKeySeverity]; ok && len(se) > 0 {
-			se = strings.Title(strings.ToLower(se))
+			title := cases.Title(language.Und)
+			se = title.String(strings.ToLower(se))
 			code := vuln.Severity(se).Code()
 			filters = append(filters, &pol.Filter{
 				Type:  pol.FilterTypeVulnerability,

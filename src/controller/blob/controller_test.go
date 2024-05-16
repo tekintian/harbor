@@ -20,19 +20,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/goharbor/harbor/src/pkg/blob/models"
-
 	"github.com/docker/distribution/manifest/schema2"
-	"github.com/goharbor/harbor/src/pkg/blob"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/lib/errors"
+	pkg_blob "github.com/goharbor/harbor/src/pkg/blob"
+	"github.com/goharbor/harbor/src/pkg/blob/models"
 	"github.com/goharbor/harbor/src/pkg/distribution"
 	htesting "github.com/goharbor/harbor/src/testing"
 	"github.com/goharbor/harbor/src/testing/mock"
 	blobtesting "github.com/goharbor/harbor/src/testing/pkg/blob"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/suite"
-
-	pkg_blob "github.com/goharbor/harbor/src/pkg/blob"
 )
 
 type ControllerTestSuite struct {
@@ -115,6 +113,7 @@ func (suite *ControllerTestSuite) TestCalculateTotalSizeByProject() {
 func (suite *ControllerTestSuite) TestCalculateTotalSize() {
 	ctx := suite.Context()
 	size1, err := Ctl.CalculateTotalSize(ctx, true)
+	suite.Nil(err)
 	Ctl.Ensure(ctx, suite.DigestString(), schema2.MediaTypeForeignLayer, 100)
 	Ctl.Ensure(ctx, suite.DigestString(), schema2.MediaTypeLayer, 100)
 	size2, err := Ctl.CalculateTotalSize(ctx, false)
@@ -160,7 +159,7 @@ func (suite *ControllerTestSuite) TestFindMissingAssociationsForProjectByArtifac
 		suite.Len(blobs, 0)
 	}
 
-	blobs := []*blob.Blob{{Digest: "1"}, {Digest: "2"}, {Digest: "3"}}
+	blobs := []*pkg_blob.Blob{{Digest: "1"}, {Digest: "2"}, {Digest: "3"}}
 
 	{
 		mock.OnAnything(blobMgr, "List").Return(nil, nil).Once()
@@ -177,7 +176,7 @@ func (suite *ControllerTestSuite) TestFindMissingAssociationsForProjectByArtifac
 	}
 
 	{
-		associated := []*blob.Blob{{Digest: "1"}}
+		associated := []*pkg_blob.Blob{{Digest: "1"}}
 		mock.OnAnything(blobMgr, "List").Return(associated, nil).Once()
 		missing, err := ctl.FindMissingAssociationsForProject(ctx, projectID, blobs)
 		suite.Nil(err)
@@ -270,16 +269,17 @@ func (suite *ControllerTestSuite) TestSync() {
 }
 
 func (suite *ControllerTestSuite) TestGetSetAcceptedBlobSize() {
+	ctx := context.TODO()
 	{
 		sessionID := uuid.New().String()
 
-		size, err := Ctl.GetAcceptedBlobSize(sessionID)
+		size, err := Ctl.GetAcceptedBlobSize(ctx, sessionID)
 		suite.Nil(err)
 		suite.Equal(int64(0), size)
 
-		suite.Nil(Ctl.SetAcceptedBlobSize(sessionID, 100))
+		suite.Nil(Ctl.SetAcceptedBlobSize(ctx, sessionID, 100))
 
-		size, err = Ctl.GetAcceptedBlobSize(sessionID)
+		size, err = Ctl.GetAcceptedBlobSize(ctx, sessionID)
 		suite.Nil(err)
 		suite.Equal(int64(100), size)
 	}
@@ -290,19 +290,19 @@ func (suite *ControllerTestSuite) TestGetSetAcceptedBlobSize() {
 
 		sessionID := uuid.New().String()
 
-		size, err := ctl.GetAcceptedBlobSize(sessionID)
+		size, err := ctl.GetAcceptedBlobSize(ctx, sessionID)
 		suite.Nil(err)
 		suite.Equal(int64(0), size)
 
-		suite.Nil(ctl.SetAcceptedBlobSize(sessionID, 100))
+		suite.Nil(ctl.SetAcceptedBlobSize(ctx, sessionID, 100))
 
-		size, err = ctl.GetAcceptedBlobSize(sessionID)
+		size, err = ctl.GetAcceptedBlobSize(ctx, sessionID)
 		suite.Nil(err)
 		suite.Equal(int64(100), size)
 
 		time.Sleep(time.Second * 10)
 
-		size, err = ctl.GetAcceptedBlobSize(sessionID)
+		size, err = ctl.GetAcceptedBlobSize(ctx, sessionID)
 		suite.Nil(err)
 		suite.Equal(int64(0), size)
 	}
@@ -311,7 +311,7 @@ func (suite *ControllerTestSuite) TestGetSetAcceptedBlobSize() {
 func (suite *ControllerTestSuite) TestTouch() {
 	ctx := suite.Context()
 
-	err := Ctl.Touch(ctx, &blob.Blob{
+	err := Ctl.Touch(ctx, &pkg_blob.Blob{
 		Status: models.StatusNone,
 	})
 	suite.NotNil(err)
@@ -332,7 +332,7 @@ func (suite *ControllerTestSuite) TestTouch() {
 func (suite *ControllerTestSuite) TestFail() {
 	ctx := suite.Context()
 
-	err := Ctl.Fail(ctx, &blob.Blob{
+	err := Ctl.Fail(ctx, &pkg_blob.Blob{
 		Status: models.StatusNone,
 	})
 	suite.NotNil(err)

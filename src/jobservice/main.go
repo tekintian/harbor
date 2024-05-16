@@ -19,6 +19,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/config"
@@ -27,10 +28,24 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/logger"
 	"github.com/goharbor/harbor/src/jobservice/runtime"
 	cfgLib "github.com/goharbor/harbor/src/lib/config"
+	tracelib "github.com/goharbor/harbor/src/lib/trace"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/base"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/cosign"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/notation"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/nydus"
+	_ "github.com/goharbor/harbor/src/pkg/accessory/model/subject"
+	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	_ "github.com/goharbor/harbor/src/pkg/config/rest"
+	_ "github.com/goharbor/harbor/src/pkg/scan/sbom"
+	_ "github.com/goharbor/harbor/src/pkg/scan/vulnerability"
 )
 
 func main() {
+	cfgLib.DefaultCfgManager = common.RestCfgManager
+	if err := cfgLib.DefaultMgr().Load(context.Background()); err != nil {
+		panic(fmt.Sprintf("failed to load configuration, error: %v", err))
+	}
+
 	// Get parameters
 	configPath := flag.String("c", "", "Specify the yaml config file path")
 	flag.Parse()
@@ -57,17 +72,17 @@ func main() {
 		panic(err)
 	}
 
+	cfgLib.InitTraceConfig(ctx)
+	defer tracelib.InitGlobalTracer(context.Background()).Shutdown()
+
 	// Set job context initializer
 	runtime.JobService.SetJobContextInitializer(func(ctx context.Context) (job.Context, error) {
 		secret := config.GetAuthSecret()
 		if utils.IsEmptyStr(secret) {
 			return nil, errors.New("empty auth secret")
 		}
-		cfgMgr, err := cfgLib.GetManager(common.RestCfgManager)
-		if err != nil {
-			return nil, err
-		}
-		jobCtx := impl.NewContext(ctx, cfgMgr)
+
+		jobCtx := impl.NewContext(ctx, cfgLib.DefaultMgr())
 
 		if err := jobCtx.Init(); err != nil {
 			return nil, err

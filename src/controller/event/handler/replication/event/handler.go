@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/replication"
 	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
 	"github.com/goharbor/harbor/src/lib/log"
@@ -37,8 +38,7 @@ func Handle(ctx context.Context, event *Event) error {
 	var policies []*repctlmodel.Policy
 	var err error
 	switch event.Type {
-	case EventTypeArtifactPush, EventTypeChartUpload, EventTypeTagDelete,
-		EventTypeArtifactDelete, EventTypeChartDelete:
+	case EventTypeArtifactPush, EventTypeTagDelete, EventTypeArtifactDelete:
 		policies, err = getRelatedPolicies(ctx, event.Resource)
 	default:
 		return fmt.Errorf("unsupported event type %s", event.Type)
@@ -50,6 +50,10 @@ func Handle(ctx context.Context, event *Event) error {
 	if len(policies) == 0 {
 		log.Debugf("no policy found for the event %v, do nothing", event)
 		return nil
+	}
+
+	if event.Operator != "" {
+		ctx = context.WithValue(ctx, operator.ContextKey{}, event.Operator)
 	}
 
 	for _, policy := range policies {

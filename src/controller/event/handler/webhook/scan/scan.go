@@ -18,18 +18,17 @@ import (
 	"context"
 	"time"
 
-	o "github.com/astaxie/beego/orm"
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/event/handler/util"
+	eventModel "github.com/goharbor/harbor/src/controller/event/model"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/scan"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/notification"
 	"github.com/goharbor/harbor/src/pkg/notifier/model"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 )
 
@@ -65,17 +64,17 @@ func (si *Handler) Handle(ctx context.Context, value interface{}) error {
 	}
 
 	// Get project
-	prj, err := project.Ctl.Get(orm.Context(), e.Artifact.NamespaceID, project.Metadata(true))
+	prj, err := project.Ctl.Get(ctx, e.Artifact.NamespaceID, project.Metadata(true))
 	if err != nil {
 		return errors.Wrap(err, "scan preprocess handler")
 	}
 
-	payload, err := constructScanImagePayload(e, prj)
+	payload, err := constructScanImagePayload(ctx, e, prj)
 	if err != nil {
 		return errors.Wrap(err, "scan preprocess handler")
 	}
 
-	err = util.SendHookWithPolicies(policies, payload, e.EventType)
+	err = util.SendHookWithPolicies(ctx, policies, payload, e.EventType)
 	if err != nil {
 		return errors.Wrap(err, "scan preprocess handler")
 	}
@@ -88,10 +87,10 @@ func (si *Handler) IsStateful() bool {
 	return false
 }
 
-func constructScanImagePayload(event *event.ScanImageEvent, project *models.Project) (*model.Payload, error) {
-	repoType := models.ProjectPrivate
+func constructScanImagePayload(ctx context.Context, event *event.ScanImageEvent, project *proModels.Project) (*model.Payload, error) {
+	repoType := proModels.ProjectPrivate
 	if project.IsPublic() {
-		repoType = models.ProjectPublic
+		repoType = proModels.ProjectPublic
 	}
 
 	repoName := util.GetNameFromImgRepoFullName(event.Artifact.Repository)
@@ -106,21 +105,22 @@ func constructScanImagePayload(event *event.ScanImageEvent, project *models.Proj
 				RepoFullName: event.Artifact.Repository,
 				RepoType:     repoType,
 			},
+			Scan: &eventModel.Scan{
+				ScanType: event.ScanType,
+			},
 		},
 		Operator: event.Operator,
 	}
 
-	reference := event.Artifact.Digest
+	reference := event.Artifact.Tag
 	if reference == "" {
-		reference = event.Artifact.Tag
+		reference = event.Artifact.Digest
 	}
 
 	resURL, err := util.BuildImageResourceURL(event.Artifact.Repository, reference)
 	if err != nil {
 		return nil, errors.Wrap(err, "construct scan payload")
 	}
-
-	ctx := orm.NewContext(context.TODO(), o.NewOrm())
 
 	art, err := artifact.Ctl.GetByReference(ctx, event.Artifact.Repository, event.Artifact.Digest, nil)
 	if err != nil {
@@ -142,17 +142,29 @@ func constructScanImagePayload(event *event.ScanImageEvent, project *models.Proj
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// Add scan overview
-	summaries, err := scan.DefaultController.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport})
-	if err != nil {
-		return nil, errors.Wrap(err, "construct scan payload")
+	scanSummaries := map[string]interface{}{}
+	if event.ScanType == v1.ScanTypeVulnerability {
+		scanSummaries, err = scan.DefaultController.GetSummary(ctx, art, []string{v1.MimeTypeNativeReport, v1.MimeTypeGenericVulnerabilityReport})
+		if err != nil {
+			return nil, errors.Wrap(err, "construct scan payload")
+		}
 	}
 
+	sbomOverview := map[string]interface{}{}
+	if event.ScanType == v1.ScanTypeSbom {
+		sbomOverview, err = scan.DefaultController.GetSummary(ctx, art, []string{v1.MimeTypeSBOMReport})
+		if err != nil {
+			return nil, errors.Wrap(err, "construct scan payload")
+		}
+	}
+
+	// Add scan overview and sbom overview
 	resource := &model.Resource{
 		Tag:          event.Artifact.Tag,
 		Digest:       event.Artifact.Digest,
 		ResourceURL:  resURL,
-		ScanOverview: summaries,
+		ScanOverview: scanSummaries,
+		SBOMOverview: sbomOverview,
 	}
 	payload.EventData.Resources = append(payload.EventData.Resources, resource)
 

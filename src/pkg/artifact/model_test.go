@@ -19,10 +19,11 @@ import (
 	"time"
 
 	"github.com/docker/distribution/manifest/manifestlist"
-	"github.com/goharbor/harbor/src/pkg/artifact/dao"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/pkg/artifact/dao"
 )
 
 type modelTestSuite struct {
@@ -36,6 +37,7 @@ func (m *modelTestSuite) TestArtifactFrom() {
 		Type:              "IMAGE",
 		MediaType:         "application/vnd.oci.image.config.v1+json",
 		ManifestMediaType: "application/vnd.oci.image.manifest.v1+json",
+		ArtifactType:      "application/vnd.example+type",
 		ProjectID:         1,
 		RepositoryID:      1,
 		Digest:            "sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180",
@@ -51,6 +53,7 @@ func (m *modelTestSuite) TestArtifactFrom() {
 	assert.Equal(t, dbArt.Type, art.Type)
 	assert.Equal(t, dbArt.MediaType, art.MediaType)
 	assert.Equal(t, dbArt.ManifestMediaType, art.ManifestMediaType)
+	assert.Equal(t, dbArt.ArtifactType, art.ArtifactType)
 	assert.Equal(t, dbArt.ProjectID, art.ProjectID)
 	assert.Equal(t, dbArt.RepositoryID, art.RepositoryID)
 	assert.Equal(t, dbArt.Digest, art.Digest)
@@ -70,6 +73,7 @@ func (m *modelTestSuite) TestArtifactTo() {
 		RepositoryID:      1,
 		MediaType:         "application/vnd.oci.image.config.v1+json",
 		ManifestMediaType: "application/vnd.oci.image.manifest.v1+json",
+		ArtifactType:      "application/vnd.example+type",
 		Digest:            "sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180",
 		Size:              1024,
 		PushTime:          time.Now(),
@@ -86,6 +90,7 @@ func (m *modelTestSuite) TestArtifactTo() {
 	assert.Equal(t, art.Type, dbArt.Type)
 	assert.Equal(t, art.MediaType, dbArt.MediaType)
 	assert.Equal(t, art.ManifestMediaType, dbArt.ManifestMediaType)
+	assert.Equal(t, art.ArtifactType, dbArt.ArtifactType)
 	assert.Equal(t, art.ProjectID, dbArt.ProjectID)
 	assert.Equal(t, art.RepositoryID, dbArt.RepositoryID)
 	assert.Equal(t, art.Digest, dbArt.Digest)

@@ -17,11 +17,13 @@ package dep
 import (
 	"errors"
 	"fmt"
+	"net/http"
+
 	"github.com/goharbor/harbor/src/common/http/modifier/auth"
 	"github.com/goharbor/harbor/src/jobservice/config"
+	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/selector"
 	"github.com/goharbor/harbor/src/pkg/clients/core"
-	"net/http"
 )
 
 // DefaultClient for the retention
@@ -58,6 +60,17 @@ type Client interface {
 	Delete(candidate *selector.Candidate) error
 }
 
+type injectVendorType struct{}
+
+// injectVendorType injects vendor type to request header.
+func (i *injectVendorType) Modify(req *http.Request) error {
+	if req != nil {
+		req.Header.Set("VendorType", job.RetentionVendorType)
+	}
+
+	return nil
+}
+
 // NewClient new a basic client
 func NewClient(client ...*http.Client) Client {
 	var c *http.Client
@@ -72,7 +85,7 @@ func NewClient(client ...*http.Client) Client {
 	internalCoreURL := config.GetCoreURL()
 	jobserviceSecret := config.GetAuthSecret()
 	authorizer := auth.NewSecretAuthorizer(jobserviceSecret)
-	coreClient := core.New(internalCoreURL, c, authorizer)
+	coreClient := core.New(internalCoreURL, c, authorizer, &injectVendorType{})
 
 	return &basicClient{
 		internalCoreURL: internalCoreURL,
@@ -100,7 +113,7 @@ func (bc *basicClient) GetCandidates(repository *selector.Repository) ([]*select
 		}
 		for _, art := range artifacts {
 			if art.Digest == "" {
-				return nil, fmt.Errorf("Lack Digest of Candidate for %s/%s", repository.Namespace, repository.Name)
+				return nil, fmt.Errorf("lack digest of candidate for %s/%s", repository.Namespace, repository.Name)
 			}
 			labels := make([]string, 0)
 			for _, label := range art.Labels {

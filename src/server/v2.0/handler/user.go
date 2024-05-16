@@ -18,12 +18,15 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common"
+	commonmodels "github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
-	"github.com/goharbor/harbor/src/common/rbac/system"
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/common/security/local"
 	"github.com/goharbor/harbor/src/common/utils"
@@ -33,14 +36,12 @@ import (
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/lib/retry"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
-	usermodels "github.com/goharbor/harbor/src/pkg/user/models"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/user"
 )
-
-var userResource = system.NewNamespace().Resource(rbac.ResourceUser)
 
 type usersAPI struct {
 	BaseAPI
@@ -60,6 +61,13 @@ func (u *usersAPI) SetCliSecret(ctx context.Context, params operation.SetCliSecr
 	if err := u.requireForCLISecret(ctx, uid); err != nil {
 		return u.SendError(ctx, err)
 	}
+	if params.Secret.Secret == "" {
+		rSec, err := getRandomSecret()
+		if err != nil {
+			return u.SendError(ctx, err)
+		}
+		params.Secret.Secret = rSec
+	}
 	if err := requireValidSecret(params.Secret.Secret); err != nil {
 		return u.SendError(ctx, err)
 	}
@@ -77,14 +85,14 @@ func (u *usersAPI) CreateUser(ctx context.Context, params operation.CreateUserPa
 	if err := requireValidSecret(params.UserReq.Password); err != nil {
 		return u.SendError(ctx, err)
 	}
-	m := &usermodels.User{
+	m := &commonmodels.User{
 		Username: params.UserReq.Username,
 		Realname: params.UserReq.Realname,
 		Email:    params.UserReq.Email,
 		Comment:  params.UserReq.Comment,
 		Password: params.UserReq.Password,
 	}
-	if err := validateUserProfile(m); err != nil {
+	if err := validateUserProfile(m, true); err != nil {
 		return u.SendError(ctx, err)
 	}
 	uid, err := u.ctl.Create(ctx, m)
@@ -94,11 +102,10 @@ func (u *usersAPI) CreateUser(ctx context.Context, params operation.CreateUserPa
 	}
 	location := fmt.Sprintf("%s/%d", strings.TrimSuffix(params.HTTPRequest.URL.Path, "/"), uid)
 	return operation.NewCreateUserCreated().WithLocation(location)
-
 }
 
 func (u *usersAPI) ListUsers(ctx context.Context, params operation.ListUsersParams) middleware.Responder {
-	if err := u.RequireSystemAccess(ctx, rbac.ActionList, userResource); err != nil {
+	if err := u.RequireSystemAccess(ctx, rbac.ActionList, rbac.ResourceUser); err != nil {
 		return u.SendError(ctx, err)
 	}
 	query, err := u.BuildQuery(ctx, params.Q, params.Sort, params.Page, params.PageSize)
@@ -137,7 +144,7 @@ func (u *usersAPI) ListUsers(ctx context.Context, params operation.ListUsersPara
 
 func (u *usersAPI) GetCurrentUserPermissions(ctx context.Context, params operation.GetCurrentUserPermissionsParams) middleware.Responder {
 	if err := u.RequireAuthenticated(ctx); err != nil {
-		u.SendError(ctx, err)
+		return u.SendError(ctx, err)
 	}
 	scope := ""
 	if params.Scope != nil {
@@ -186,7 +193,7 @@ func (u *usersAPI) DeleteUser(ctx context.Context, params operation.DeleteUserPa
 	return operation.NewDeleteUserOK()
 }
 
-func (u *usersAPI) GetCurrentUserInfo(ctx context.Context, params operation.GetCurrentUserInfoParams) middleware.Responder {
+func (u *usersAPI) GetCurrentUserInfo(ctx context.Context, _ operation.GetCurrentUserInfoParams) middleware.Responder {
 	if err := u.RequireAuthenticated(ctx); err != nil {
 		return u.SendError(ctx, err)
 	}
@@ -197,7 +204,6 @@ func (u *usersAPI) GetCurrentUserInfo(ctx context.Context, params operation.GetC
 	}
 	resp, err := u.getUserByID(ctx, lsc.User().UserID)
 	if err != nil {
-
 		return u.SendError(ctx, err)
 	}
 	return operation.NewGetCurrentUserInfoOK().WithPayload(resp)
@@ -241,13 +247,13 @@ func (u *usersAPI) UpdateUserProfile(ctx context.Context, params operation.Updat
 	if err := u.requireModifiable(ctx, uid); err != nil {
 		return u.SendError(ctx, err)
 	}
-	m := &usermodels.User{
+	m := &commonmodels.User{
 		UserID:   uid,
 		Realname: params.Profile.Realname,
 		Email:    params.Profile.Email,
 		Comment:  params.Profile.Comment,
 	}
-	if err := validateUserProfile(m); err != nil {
+	if err := validateUserProfile(m, false); err != nil {
 		return u.SendError(ctx, err)
 	}
 	if err := u.ctl.UpdateProfile(ctx, m); err != nil {
@@ -282,6 +288,9 @@ func (u *usersAPI) SearchUsers(ctx context.Context, params operation.SearchUsers
 		m := &model.User{User: us}
 		result = append(result, m.ToSearchRespItem())
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return utils.MostMatchSorter(result[i].Username, result[j].Username, params.Username)
+	})
 	return operation.NewSearchUsersOK().
 		WithXTotalCount(total).
 		WithPayload(result).
@@ -308,7 +317,12 @@ func (u *usersAPI) UpdateUserPassword(ctx context.Context, params operation.Upda
 	if err := requireValidSecret(newPwd); err != nil {
 		return u.SendError(ctx, err)
 	}
-	ok, err := u.ctl.VerifyPassword(ctx, sctx.GetUsername(), newPwd)
+	user, err := u.getUserByID(ctx, uid)
+	if err != nil {
+		log.G(ctx).Errorf("Failed to get user profile for uid: %d, error: %v", uid, err)
+		return u.SendError(ctx, err)
+	}
+	ok, err := u.ctl.VerifyPassword(ctx, user.Username, newPwd)
 	if err != nil {
 		log.G(ctx).Errorf("Failed to verify password for user: %s, error: %v", sctx.GetUsername(), err)
 		return u.SendError(ctx, errors.UnknownError(nil).WithMessage("Failed to verify password"))
@@ -348,7 +362,7 @@ func (u *usersAPI) requireForCLISecret(ctx context.Context, id int) error {
 	if !ok || !sctx.IsAuthenticated() {
 		return errors.UnauthorizedError(nil)
 	}
-	if !matchUserID(sctx, id) && !sctx.Can(ctx, rbac.ActionUpdate, userResource) {
+	if !matchUserID(sctx, id) && !sctx.Can(ctx, rbac.ActionUpdate, rbac.ResourceUser) {
 		return errors.ForbiddenError(nil).WithMessage("Not authorized to update the CLI secret for user: %d", id)
 	}
 	return nil
@@ -383,7 +397,7 @@ func (u *usersAPI) requireReadable(ctx context.Context, id int) error {
 	if !ok || !sctx.IsAuthenticated() {
 		return errors.UnauthorizedError(nil)
 	}
-	if !matchUserID(sctx, id) && !sctx.Can(ctx, rbac.ActionRead, userResource) {
+	if !matchUserID(sctx, id) && !sctx.Can(ctx, rbac.ActionRead, rbac.ResourceUser) {
 		return errors.ForbiddenError(nil).WithMessage("Not authorized to read user: %d", id)
 	}
 	return nil
@@ -394,15 +408,7 @@ func (u *usersAPI) requireDeletable(ctx context.Context, id int) error {
 	if !ok || !sctx.IsAuthenticated() {
 		return errors.UnauthorizedError(nil)
 	}
-	a, err := u.getAuth(ctx)
-	if err != nil {
-		log.G(ctx).Errorf("Failed to get authmode, error: %v", err)
-		return err
-	}
-	if a != common.DBAuth {
-		return errors.ForbiddenError(nil).WithMessage("Deleting user is not allowed under auth mode: %s", a)
-	}
-	if !sctx.Can(ctx, rbac.ActionDelete, userResource) {
+	if !sctx.Can(ctx, rbac.ActionDelete, rbac.ResourceUser) {
 		return errors.ForbiddenError(nil).WithMessage("Not authorized to delete users")
 	}
 	if matchUserID(sctx, id) || id == 1 {
@@ -429,12 +435,11 @@ func (u *usersAPI) requireModifiable(ctx context.Context, id int) error {
 func modifiable(ctx context.Context, authMode string, id int) bool {
 	sctx, _ := security.FromContext(ctx)
 	if authMode == common.DBAuth {
-
 		// In db auth, admin can update anyone's info, and regular user can update his own
-		return sctx.Can(ctx, rbac.ActionUpdate, userResource) || matchUserID(sctx, id)
+		return sctx.Can(ctx, rbac.ActionUpdate, rbac.ResourceUser) || matchUserID(sctx, id)
 	}
 	// In none db auth, only the local admin's password can be updated.
-	return id == 1 && sctx.Can(ctx, rbac.ActionUpdate, userResource)
+	return id == 1 && sctx.Can(ctx, rbac.ActionUpdate, rbac.ResourceUser)
 }
 
 func matchUserID(sctx security.Context, id int) bool {
@@ -448,13 +453,36 @@ func requireValidSecret(in string) error {
 	hasLower := regexp.MustCompile(`[a-z]`)
 	hasUpper := regexp.MustCompile(`[A-Z]`)
 	hasNumber := regexp.MustCompile(`[0-9]`)
-	if len(in) >= 8 && hasLower.MatchString(in) && hasUpper.MatchString(in) && hasNumber.MatchString(in) {
+	if len(in) >= 8 && len(in) <= 128 && hasLower.MatchString(in) && hasUpper.MatchString(in) && hasNumber.MatchString(in) {
 		return nil
 	}
-	return errors.BadRequestError(nil).WithMessage("the password or secret must be longer than 8 chars with at least 1 uppercase letter, 1 lowercase letter and 1 number")
+	return errors.BadRequestError(nil).WithMessage("the password or secret must be 8-128, inclusively, characters long with at least 1 uppercase letter, 1 lowercase letter and 1 number")
 }
 
-func validateUserProfile(user *usermodels.User) error {
+func getRandomSecret() (string, error) {
+	var cliSecret string
+	options := []retry.Option{
+		retry.InitialInterval(time.Millisecond * 500),
+		retry.MaxInterval(time.Second * 10),
+		retry.Timeout(time.Minute),
+		retry.Callback(func(err error, sleep time.Duration) {
+			log.Debugf("failed to generate secret for cli, retry after %s : %v", sleep, err)
+		}),
+	}
+
+	if err := retry.Retry(func() error {
+		cliSecret = utils.GenerateRandomStringWithLen(9)
+		if err := requireValidSecret(cliSecret); err != nil {
+			return errors.New(nil).WithMessage("invalid cli secret format")
+		}
+		return nil
+	}, options...); err != nil {
+		return "", errors.Wrap(err, "failed to generate an valid random secret for cli in one minute, please try again")
+	}
+	return cliSecret, nil
+}
+
+func validateUserProfile(user *commonmodels.User, create bool) error {
 	if len(user.Email) > 0 {
 		if m, _ := regexp.MatchString(`^(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(\".+\"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$`, user.Email); !m {
 			return errors.BadRequestError(nil).WithMessage("email with illegal format")
@@ -467,12 +495,25 @@ func validateUserProfile(user *usermodels.User) error {
 		return errors.BadRequestError(nil).WithMessage("realname with illegal length")
 	}
 
-	if utils.IsContainIllegalChar(user.Realname, []string{",", "~", "#", "$", "%"}) {
+	if strings.ContainsAny(user.Realname, common.IllegalCharsInUsername) {
 		return errors.BadRequestError(nil).WithMessage("realname contains illegal characters")
 	}
 
 	if utils.IsIllegalLength(user.Comment, -1, 30) {
 		return errors.BadRequestError(nil).WithMessage("comment with illegal length")
+	}
+
+	// skip to validate username for update because username is empty in the request
+	if !create {
+		return nil
+	}
+
+	if utils.IsIllegalLength(user.Username, 1, 255) {
+		return errors.BadRequestError(nil).WithMessage("username with illegal length")
+	}
+
+	if strings.ContainsAny(user.Username, common.IllegalCharsInUsername) {
+		return errors.BadRequestError(nil).WithMessage("username contains illegal characters")
 	}
 
 	return nil

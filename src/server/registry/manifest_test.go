@@ -16,19 +16,23 @@ package registry
 
 import (
 	"context"
-	beegocontext "github.com/astaxie/beego/context"
-	"github.com/goharbor/harbor/src/server/router"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	beegocontext "github.com/beego/beego/v2/server/web/context"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/repository"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/pkg"
+	"github.com/goharbor/harbor/src/server/router"
 	arttesting "github.com/goharbor/harbor/src/testing/controller/artifact"
 	repotesting "github.com/goharbor/harbor/src/testing/controller/repository"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
+	testmanifest "github.com/goharbor/harbor/src/testing/pkg/cached/manifest/redis"
 )
 
 type manifestTestSuite struct {
@@ -36,21 +40,24 @@ type manifestTestSuite struct {
 	originalRepoCtl repository.Controller
 	originalArtCtl  artifact.Controller
 	originalProxy   http.Handler
-	repoCtl         *repotesting.FakeController
+	repoCtl         *repotesting.Controller
 	artCtl          *arttesting.Controller
+	cachedMgr       *testmanifest.CachedManager
 }
 
 func (m *manifestTestSuite) SetupSuite() {
 	m.originalRepoCtl = repository.Ctl
 	m.originalArtCtl = artifact.Ctl
 	m.originalProxy = proxy
+	m.cachedMgr = &testmanifest.CachedManager{}
 }
 
 func (m *manifestTestSuite) SetupTest() {
-	m.repoCtl = &repotesting.FakeController{}
+	m.repoCtl = &repotesting.Controller{}
 	m.artCtl = &arttesting.Controller{}
 	repository.Ctl = m.repoCtl
 	artifact.Ctl = m.artCtl
+	pkg.ManifestMgr = m.cachedMgr
 }
 
 func (m *manifestTestSuite) TearDownTest() {
@@ -93,6 +100,24 @@ func (m *manifestTestSuite) TestGetManifest() {
 	mock.OnAnything(m.artCtl, "GetByReference").Return(art, nil)
 	getManifest(w, req)
 	m.Equal(http.StatusOK, w.Code)
+
+	// if etag match, return 304
+	req = httptest.NewRequest(http.MethodGet, "/v2/library/hello-world/manifests/", nil)
+	w = &httptest.ResponseRecorder{}
+	req.Header.Set("If-None-Match", "sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180")
+	getManifest(w, req)
+	m.Equal(http.StatusNotModified, w.Code)
+
+	// should get from cache if enable cache.
+	config.DefaultMgr().Set(req.Context(), "cache_enabled", true)
+	defer config.DefaultMgr().Set(req.Context(), "cache_enabled", false)
+	req = httptest.NewRequest(http.MethodGet, "/v2/library/hello-world/manifests/", nil)
+	w = &httptest.ResponseRecorder{}
+	mock.OnAnything(m.cachedMgr, "Get").Return([]byte{}, nil)
+	getManifest(w, req)
+	m.Equal(http.StatusOK, w.Code)
+	m.Equal("sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180", w.Header().Get("Docker-Content-Digest"))
+	m.cachedMgr.AssertCalled(m.T(), "Get", mock.Anything, mock.Anything)
 }
 
 func (m *manifestTestSuite) TestDeleteManifest() {
@@ -128,6 +153,20 @@ func (m *manifestTestSuite) TestDeleteManifest() {
 	mock.OnAnything(m.artCtl, "Delete").Return(nil)
 	deleteManifest(w, req)
 	m.Equal(http.StatusAccepted, w.Code)
+
+	// should get from cache if enable cache.
+	config.DefaultMgr().Set(req.Context(), "cache_enabled", true)
+	defer config.DefaultMgr().Set(req.Context(), "cache_enabled", false)
+	// should delete cache when manifest be deleted.
+	req = httptest.NewRequest(http.MethodDelete, "/v2/library/hello-world/manifests/sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180", nil)
+	input = &beegocontext.BeegoInput{}
+	input.SetParam(":reference", "sha256:418fb88ec412e340cdbef913b8ca1bbe8f9e8dc705f9617414c1f2c8db980180")
+	*req = *(req.WithContext(context.WithValue(req.Context(), router.ContextKeyInput{}, input)))
+	w = &httptest.ResponseRecorder{}
+	mock.OnAnything(m.cachedMgr, "Delete").Return(nil)
+	deleteManifest(w, req)
+	m.Equal(http.StatusAccepted, w.Code)
+	m.cachedMgr.AssertCalled(m.T(), "Delete", mock.Anything, mock.Anything)
 }
 
 func (m *manifestTestSuite) TestPutManifest() {
@@ -141,7 +180,7 @@ func (m *manifestTestSuite) TestPutManifest() {
 	})
 	req := httptest.NewRequest(http.MethodPut, "/v2/library/hello-world/manifests/latest", nil)
 	w := &httptest.ResponseRecorder{}
-	m.repoCtl.On("Ensure").Return(false, 1, nil)
+	mock.OnAnything(m.repoCtl, "Ensure").Return(false, int64(1), nil)
 	putManifest(w, req)
 	m.Equal(http.StatusInternalServerError, w.Code)
 
@@ -159,7 +198,7 @@ func (m *manifestTestSuite) TestPutManifest() {
 	})
 	req = httptest.NewRequest(http.MethodPut, "/v2/library/hello-world/manifests/latest", nil)
 	w = &httptest.ResponseRecorder{}
-	m.repoCtl.On("Ensure").Return(false, 1, nil)
+	mock.OnAnything(m.repoCtl, "Ensure").Return(false, int64(1), nil)
 	mock.OnAnything(m.artCtl, "Ensure").Return(true, int64(1), nil)
 	putManifest(w, req)
 	m.Equal(http.StatusCreated, w.Code)

@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -157,43 +158,6 @@ func TestGenerateRandomStringWithLen(t *testing.T) {
 	str := GenerateRandomStringWithLen(16)
 	if len(str) != 16 {
 		t.Errorf("Failed to generate ramdom string with fixed length.")
-	}
-}
-
-func TestParseLink(t *testing.T) {
-	raw := ""
-	links := ParseLink(raw)
-	if len(links) != 0 {
-		t.Errorf("unexpected length: %d != %d", len(links), 0)
-	}
-	raw = "a;b,c"
-	links = ParseLink(raw)
-	if len(links) != 0 {
-		t.Errorf("unexpected length: %d != %d", len(links), 0)
-	}
-
-	raw = `</api/users?page=1&page_size=100>; rel="prev"`
-	links = ParseLink(raw)
-	if len(links) != 1 {
-		t.Errorf("unexpected length: %d != %d", len(links), 1)
-	}
-	prev := `/api/users?page=1&page_size=100`
-	if links.Prev() != prev {
-		t.Errorf("unexpected prev: %s != %s", links.Prev(), prev)
-	}
-
-	raw = `</api/users?page=1&page_size=100>; rel="prev", </api/users?page=3&page_size=100>; rel="next"`
-	links = ParseLink(raw)
-	if len(links) != 2 {
-		t.Errorf("unexpected length: %d != %d", len(links), 2)
-	}
-	prev = `/api/users?page=1&page_size=100`
-	if links.Prev() != prev {
-		t.Errorf("unexpected prev: %s != %s", links.Prev(), prev)
-	}
-	next := `/api/users?page=3&page_size=100`
-	if links.Next() != next {
-		t.Errorf("unexpected prev: %s != %s", links.Next(), next)
 	}
 }
 
@@ -354,29 +318,6 @@ func TestSafeCastFloat64(t *testing.T) {
 	}
 }
 
-func TestParseOfftime(t *testing.T) {
-	cases := []struct {
-		offtime int64
-		hour    int
-		minite  int
-		second  int
-	}{
-		{0, 0, 0, 0},
-		{1, 0, 0, 1},
-		{60, 0, 1, 0},
-		{3600, 1, 0, 0},
-		{3661, 1, 1, 1},
-		{3600*24 + 60, 0, 1, 0},
-	}
-
-	for _, c := range cases {
-		h, m, s := ParseOfftime(c.offtime)
-		assert.Equal(t, c.hour, h)
-		assert.Equal(t, c.minite, m)
-		assert.Equal(t, c.second, s)
-	}
-}
-
 func TestTrimLower(t *testing.T) {
 	type args struct {
 		str string
@@ -427,8 +368,144 @@ func TestGetStrValueOfAnyType(t *testing.T) {
 	}
 }
 
-func TestIsDigest(t *testing.T) {
-	assert := assert.New(t)
-	assert.False(IsDigest("latest"))
-	assert.True(IsDigest("sha256:1359608115b94599e5641638bac5aef1ddfaa79bb96057ebf41ebc8d33acf8a7"))
+func TestNextSchedule(t *testing.T) {
+	curTime := time.Date(2009, time.November, 10, 20, 0, 0, 0, time.UTC)
+	expectTime1 := time.Date(2009, time.November, 11, 0, 0, 0, 0, time.UTC)
+	expectTime2 := time.Date(2009, time.November, 10, 21, 0, 0, 0, time.UTC)
+	expectTime4 := time.Date(2009, time.November, 10, 20, 8, 0, 0, time.UTC)
+
+	type args struct {
+		cron    string
+		curTime time.Time
+	}
+	tests := []struct {
+		name string
+		args args
+		want time.Time
+	}{
+		{"daily_in_six", args{"0 0 0 * * *", curTime}, expectTime1},
+		{"hourly_in_six", args{"0 0 * * * *", curTime}, expectTime2},
+		{"custom", args{"0 8 20 * * *", curTime}, expectTime4},
+		{"zero time", args{"", curTime}, time.Time{}},
+		{"invalid cron", args{"2", curTime}, time.Time{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, NextSchedule(tt.args.cron, tt.args.curTime), "NextSchedule(%v, %v)", tt.args.cron, tt.args.curTime)
+		})
+	}
+}
+
+type UserGroupSearchItem struct {
+	GroupName string
+}
+
+func Test_sortMostMatch(t *testing.T) {
+	type args struct {
+		input     []*UserGroupSearchItem
+		matchWord string
+		expected  []*UserGroupSearchItem
+	}
+	tests := []struct {
+		name string
+		args args
+	}{
+		{"normal", args{[]*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "harbor_user"}, {GroupName: "admin_user"}, {GroupName: "users"},
+		}, "user", []*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "users"}, {GroupName: "admin_user"}, {GroupName: "harbor_user"},
+		}}},
+		{"duplicate_item", args{[]*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "user"}, {GroupName: "harbor_user"}, {GroupName: "admin_user"}, {GroupName: "users"},
+		}, "user", []*UserGroupSearchItem{
+			{GroupName: "user"}, {GroupName: "user"}, {GroupName: "users"}, {GroupName: "admin_user"}, {GroupName: "harbor_user"},
+		}}},
+		{"miss_exact_match", args{[]*UserGroupSearchItem{
+			{GroupName: "harbor_user"}, {GroupName: "admin_user"}, {GroupName: "users"},
+		}, "user", []*UserGroupSearchItem{
+			{GroupName: "users"}, {GroupName: "admin_user"}, {GroupName: "harbor_user"},
+		}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			sort.Slice(tt.args.input, func(i, j int) bool {
+				return MostMatchSorter(tt.args.input[i].GroupName, tt.args.input[j].GroupName, tt.args.matchWord)
+			})
+			assert.True(t, reflect.DeepEqual(tt.args.input, tt.args.expected))
+		})
+	}
+}
+
+func TestValidateCronString(t *testing.T) {
+	testCases := []struct {
+		description string
+		input       string
+		hasErr      bool
+	}{
+		// empty cron string
+		{
+			description: "test case 1",
+			input:       "",
+			hasErr:      true,
+		},
+
+		// invalid cron format
+		{
+			description: "test case 2",
+			input:       "0 2 3",
+			hasErr:      true,
+		},
+
+		// the 1st field (indicating Seconds of time) of the cron setting must be 0
+		{
+			description: "test case 3",
+			input:       "1 0 0 1 1 0",
+			hasErr:      true,
+		},
+
+		// valid cron string
+		{
+			description: "test case 4",
+			input:       "0 1 2 1 1 *",
+			hasErr:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		err := ValidateCronString(tc.input)
+		if tc.hasErr {
+			if err == nil {
+				t.Errorf("%s, expect having error, while actual error returned is nil", tc.description)
+			}
+		} else {
+			// tc.hasErr == false
+			if err != nil {
+				t.Errorf("%s, expect having no error, while actual error returned is not nil, err=%v", tc.description, err)
+			}
+		}
+	}
+}
+
+func TestIsLocalPath(t *testing.T) {
+	type args struct {
+		path string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"normal test", args{"/harbor/project"}, true},
+		{"failed", args{"www.myexample.com"}, false},
+		{"other_site1", args{"//www.myexample.com"}, false},
+		{"other_site2", args{"https://www.myexample.com"}, false},
+		{"other_site", args{"http://www.myexample.com"}, false},
+		{"empty_path", args{""}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equalf(t, tt.want, IsLocalPath(tt.args.path), "IsLocalPath(%v)", tt.args.path)
+		})
+	}
 }

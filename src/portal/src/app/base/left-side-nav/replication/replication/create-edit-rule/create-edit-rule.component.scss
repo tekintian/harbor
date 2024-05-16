@@ -1,3 +1,4 @@
+/* stylelint-disable */
 .select .optionMore {
     background-color: #bfbaba;
     height: 1.6em;
@@ -19,10 +20,6 @@ h4 {
     font-size: 12px;
 }
 
-.inputWidth {
-    width: 270px;
-}
-
 .endpointSelect {
     width: 270px;
     margin-right: 10px;
@@ -31,39 +28,17 @@ h4 {
 .filterSelect {
     position: relative;
     width: 315px;
-    margin-bottom:0.5rem;
+    margin-bottom:0.25rem;
 }
 
 .filterSelect clr-icon {
     margin-left: 10px;
-}
-
-.filterSelect label {
-    width: 190px;
-}
-
-.filterSelect label input {
-    width: 100%;
-}
-
-.pull-left {
-    float: left;
+    margin-top: 5px;
+    margin-right: 15px;
 }
 
 .padLeft0 {
     padding-left: 0;
-}
-
-.width-70 {
-    display: inline-block;
-    width: 70px;
-    margin-right: 10px;
-}
-
-.width-115 {
-    display: inline-block;
-    width: 115px;
-    margin-right: 10px;
 }
 
 .schedule-style {
@@ -109,11 +84,11 @@ h4 {
     margin-top: -0.25rem;
     border: 1px solid #ccc;
     background-color: white;
-    border: 1px solid rgba(0, 0, 0, .15);
+    border: 1px solid rgb(0 0 0 / 15%);
     border-right-width: 2px;
     border-bottom-width: 2px;
     border-radius: 6px;
-    box-shadow: 0 5px 10px rgba(0, 0, 0, .2);
+    box-shadow: 0 5px 10px rgb(0 0 0 / 20%);
     z-index: 100;
 }
 
@@ -138,6 +113,7 @@ h4 {
         font-size: 14px;
         width: 7rem;
     }
+
    .radio {
        label {
            margin-right:10px;
@@ -164,7 +140,7 @@ h4 {
 
 clr-modal {
     ::ng-deep div.modal-dialog {
-        width: 29rem;
+        width: 32rem;
     }
 }
 
@@ -173,6 +149,7 @@ clr-modal {
     line-height: 14px;
     color: red;
 }
+
 .deletedDiv a{
     margin-left: 10px;
     text-decoration: underline;
@@ -200,25 +177,6 @@ clr-modal {
     width: 100%;
 }
 
-.loading-center {
-    display: block;
-    text-align: center;
-}
- 
-.width-315 {
-    display: flex;
-    align-items: center;
-    width:315px;
-}
-
-.mr-t-10 {
-    margin-top: 10px;
-}
-
-.resource-box {
-    display: inline-block;
-    width: 190px;
-}
 .form-cron {
     padding-left:3.8rem;
 }
@@ -229,6 +187,7 @@ clr-modal {
 
 .override-box {
     flex-direction: row;
+
     .override-tooltip {
         margin: 3px 0 0 5px;
     }
@@ -241,6 +200,7 @@ clr-modal {
 .cron-tooltip {
     color: gray;
     cursor: default;
+
     .table-box {
         width: 20rem;
     }
@@ -249,26 +209,20 @@ clr-modal {
 .display-none{
     display: none;
 }
+
 .width-100 {
     width: 100%;
 }
+
 .label-text {
-    text-transform: none;
-    letter-spacing: normal;
-    font-size: 13px;
-    font-weight: 400;
-    color: #000;
+    position: relative;
     height: 1.2rem;
-    margin: 0 !important;
-    line-height: 1rem;
-    text-align: left;
-    padding-left: 6px;
-    outline: none;
-    border-bottom: 1px solid rgb(154, 154, 154);
+    display: flex;
+    align-items: center;
+    justify-content: left;
+    border-bottom: 0.05rem solid;
 }
-.labelDiv {
-    padding-left: 26px;
-}
+
 .ellipsis {
     margin-left: 0.2rem;
     font-size: 16px;
@@ -280,9 +234,126 @@ clr-modal {
     justify-content: space-between;
 }
 
-.select-width {
-    min-width:11rem;
-}
 .flex {
     display: flex;
+}
+
+.sub-label {
+    flex: 0 0 5rem;
+}
+
+.clr-control-label {
+    width: 8.6rem;
+}
+
+.des-tooltip {
+    margin-left: 0.5rem;
+}
+
+:host::ng-deep.flatten {
+    width: 23rem!important;
+}
+
+.width-input {
+    width: 17rem;
+}
+
+.width-name-resource {
+    flex: 0 0 12rem;
+    width: 12rem;
+}
+
+.width-match-exclude {
+    width: 5rem;
+}
+
+.width-tag-label {
+    width: 6rem;
+}
+
+.right-align {
+    min-width: 204px;
+    overflow-y: auto;
+    transform: translateX(-9rem) translateY(1.25rem)!important;
+}
+
+.dropdown-item {
+    min-height: 26px;
+}
+
+.no-labels {
+    cursor: default;
+    padding: 0 0.5rem;
+}
+
+.unit {
+    width: 4.18rem !important;
+}
+
+.speed {
+    width: 14rem;
+    display: inline-block;
+
+    input {
+      width: 12rem;
+    }
+}
+
+.unit-select {
+    width: 3rem;
+}
+
+.ml-10px {
+    margin-left: 10px;
+}
+
+.label-piece {
+    display: flex;
+    left: .25rem;
+}
+
+.label-container{
+    position: absolute;
+    display: flex;
+    align-items: center;
+}
+
+.clr-form-control {
+    margin-top: 1rem;
+}
+
+.flattening {
+    margin-top: 0.5rem;
+}
+
+.bandwidth {
+    margin-top: 0.25rem;
+}
+
+.down {
+    height: 25px;
+    width: 25px;
+    right: 0.2rem;
+    color: rgb(164 164 164) !important;
+    cursor: pointer;
+}
+.dropdown {
+    left: -1.2rem;
+    position: relative !important;
+}
+
+.label-input {
+    padding-right: 1.2rem;
+}
+
+.no-extend {
+    flex: 1;
+}
+
+.cron-input {
+    width: 12rem;
+}
+
+.event-label {
+    width: unset;
 }

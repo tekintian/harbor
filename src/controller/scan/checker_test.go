@@ -18,13 +18,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
+	accessoryModel "github.com/goharbor/harbor/src/pkg/accessory/model"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 	artifacttesting "github.com/goharbor/harbor/src/testing/controller/artifact"
 	scannertesting "github.com/goharbor/harbor/src/testing/controller/scanner"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
+	accessorytesting "github.com/goharbor/harbor/src/testing/pkg/accessory"
 )
 
 type CheckerTestSuite struct {
@@ -34,10 +37,12 @@ type CheckerTestSuite struct {
 func (suite *CheckerTestSuite) new() *checker {
 	artifactCtl := &artifacttesting.Controller{}
 	scannerCtl := &scannertesting.Controller{}
+	accessoryMgr := &accessorytesting.Manager{}
 
 	return &checker{
 		artifactCtl:   artifactCtl,
 		scannerCtl:    scannerCtl,
+		accMgr:        accessoryMgr,
 		registrations: map[int64]*scanner.Registration{},
 	}
 }
@@ -68,13 +73,15 @@ func (suite *CheckerTestSuite) TestIsScannable() {
 	}, nil)
 
 	{
+
 		art := &artifact.Artifact{}
 
+		mock.OnAnything(c.accMgr, "List").Return([]accessoryModel.Accessory{}, nil).Once()
 		mock.OnAnything(c.artifactCtl, "Walk").Return(nil).Once().Run(func(args mock.Arguments) {
 			walkFn := args.Get(2).(func(*artifact.Artifact) error)
 			walkFn(art)
 		})
-
+		mock.OnAnything(c.artifactCtl, "HasUnscannableLayer").Return(false, nil).Once()
 		isScannable, err := c.IsScannable(context.TODO(), art)
 		suite.Nil(err)
 		suite.False(isScannable)
@@ -85,10 +92,12 @@ func (suite *CheckerTestSuite) TestIsScannable() {
 		art.Type = "IMAGE"
 		art.ManifestMediaType = supportMimeType
 
+		mock.OnAnything(c.accMgr, "List").Return([]accessoryModel.Accessory{}, nil).Once()
 		mock.OnAnything(c.artifactCtl, "Walk").Return(nil).Once().Run(func(args mock.Arguments) {
 			walkFn := args.Get(2).(func(*artifact.Artifact) error)
 			walkFn(art)
 		})
+		mock.OnAnything(c.artifactCtl, "HasUnscannableLayer").Return(false, nil).Once()
 
 		isScannable, err := c.IsScannable(context.TODO(), art)
 		suite.Nil(err)

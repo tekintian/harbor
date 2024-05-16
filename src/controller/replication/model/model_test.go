@@ -17,9 +17,10 @@ package model
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestIsScheduledTrigger(t *testing.T) {
@@ -198,7 +199,7 @@ func TestValidate(t *testing.T) {
 	err = policy.Validate()
 	assert.True(errors.IsErr(err, errors.BadRequestCode))
 
-	// pass
+	// invalid cron: the 1st field (indicating Seconds of time) of the cron setting must be 0
 	policy = &Policy{
 		Name: "policy01",
 		SrcRegistry: &model.Registry{
@@ -221,6 +222,64 @@ func TestValidate(t *testing.T) {
 			Type: model.TriggerTypeScheduled,
 			Settings: &model.TriggerSettings{
 				Cron: "* * * * * *",
+			},
+		},
+	}
+	err = policy.Validate()
+	assert.True(errors.IsErr(err, errors.BadRequestCode))
+
+	// invalid cron: * is not allowed for the Minutes field of the cron setting of replication policy
+	policy = &Policy{
+		Name: "policy01",
+		SrcRegistry: &model.Registry{
+			ID: 0,
+		},
+		DestRegistry: &model.Registry{
+			ID: 1,
+		},
+		Filters: []*model.Filter{
+			{
+				Type:  model.FilterTypeResource,
+				Value: "image",
+			},
+			{
+				Type:  model.FilterTypeName,
+				Value: "library/**",
+			},
+		},
+		Trigger: &model.Trigger{
+			Type: model.TriggerTypeScheduled,
+			Settings: &model.TriggerSettings{
+				Cron: "0 * * * * *",
+			},
+		},
+	}
+	err = policy.Validate()
+	assert.True(errors.IsErr(err, errors.BadRequestCode))
+
+	// pass
+	policy = &Policy{
+		Name: "policy01",
+		SrcRegistry: &model.Registry{
+			ID: 0,
+		},
+		DestRegistry: &model.Registry{
+			ID: 1,
+		},
+		Filters: []*model.Filter{
+			{
+				Type:  model.FilterTypeResource,
+				Value: "image",
+			},
+			{
+				Type:  model.FilterTypeName,
+				Value: "library/**",
+			},
+		},
+		Trigger: &model.Trigger{
+			Type: model.TriggerTypeScheduled,
+			Settings: &model.TriggerSettings{
+				Cron: "0 0 * * * *",
 			},
 		},
 	}

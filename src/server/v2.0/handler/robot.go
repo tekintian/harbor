@@ -1,24 +1,41 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handler
 
 import (
 	"context"
 	"fmt"
-	"github.com/go-openapi/runtime/middleware"
-	"github.com/go-openapi/strfmt"
-	"github.com/goharbor/harbor/src/common/rbac"
-	"github.com/goharbor/harbor/src/common/utils"
-	"github.com/goharbor/harbor/src/controller/robot"
-	"github.com/goharbor/harbor/src/lib"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/lib/errors"
-	pkg "github.com/goharbor/harbor/src/pkg/robot/model"
-	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
-	"github.com/goharbor/harbor/src/server/v2.0/models"
-	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/robot"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/go-openapi/runtime/middleware"
+	"github.com/go-openapi/strfmt"
+
+	"github.com/goharbor/harbor/src/common/rbac"
+	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/controller/robot"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/permission/types"
+	pkg "github.com/goharbor/harbor/src/pkg/robot/model"
+	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
+	"github.com/goharbor/harbor/src/server/v2.0/models"
+	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/robot"
 )
 
 func newRobotAPI() *robotAPI {
@@ -55,7 +72,9 @@ func (rAPI *robotAPI) CreateRobot(ctx context.Context, params operation.CreateRo
 		Level: params.Robot.Level,
 	}
 
-	lib.JSONCopy(&r.Permissions, params.Robot.Permissions)
+	if err := lib.JSONCopy(&r.Permissions, params.Robot.Permissions); err != nil {
+		log.Warningf("failed to call JSONCopy on robot permission when CreateRobot, error: %v", err)
+	}
 
 	rid, pwd, err := rAPI.robotCtl.Create(ctx, r)
 	if err != nil {
@@ -92,7 +111,7 @@ func (rAPI *robotAPI) DeleteRobot(ctx context.Context, params operation.DeleteRo
 	}
 
 	if err := rAPI.robotCtl.Delete(ctx, params.RobotID); err != nil {
-		// for the version 1 robot account, has to ignore the no permissions error.
+		// for the version 1 robot account, has to ignore the no permission error.
 		if !r.Editable && errors.IsNotFoundErr(err) {
 			return operation.NewDeleteRobotOK()
 		}
@@ -130,7 +149,6 @@ func (rAPI *robotAPI) ListRobot(ctx context.Context, params operation.ListRobotP
 			}
 			projectID = pid
 		}
-
 	} else {
 		level = robot.LEVELSYSTEM
 		query.Keywords["ProjectID"] = 0
@@ -175,7 +193,6 @@ func (rAPI *robotAPI) GetRobotByID(ctx context.Context, params operation.GetRobo
 	if err != nil {
 		return rAPI.SendError(ctx, err)
 	}
-
 	if err := rAPI.requireAccess(ctx, r.Level, r.ProjectID, rbac.ActionRead); err != nil {
 		return rAPI.SendError(ctx, err)
 	}
@@ -196,7 +213,7 @@ func (rAPI *robotAPI) UpdateRobot(ctx context.Context, params operation.UpdateRo
 	}
 
 	if !r.Editable {
-		err = rAPI.updateV1Robot(ctx, params, r)
+		err = errors.DeniedError(nil).WithMessage("editing of legacy robot is not allowed")
 	} else {
 		err = rAPI.updateV2Robot(ctx, params, r)
 	}
@@ -224,14 +241,17 @@ func (rAPI *robotAPI) RefreshSec(ctx context.Context, params operation.RefreshSe
 	var secret string
 	robotSec := &models.RobotSec{}
 	if params.RobotSec.Secret != "" {
-		if !isValidSec(params.RobotSec.Secret) {
-			return rAPI.SendError(ctx, errors.New("the secret must longer than 8 chars with at least 1 uppercase letter, 1 lowercase letter and 1 number").WithCode(errors.BadRequestCode))
+		if !robot.IsValidSec(params.RobotSec.Secret) {
+			return rAPI.SendError(ctx, errors.New("the secret must be 8-128, inclusively, characters long with at least 1 uppercase letter, 1 lowercase letter and 1 number").WithCode(errors.BadRequestCode))
 		}
 		secret = utils.Encrypt(params.RobotSec.Secret, r.Salt, utils.SHA256)
 		robotSec.Secret = ""
 	} else {
-		pwd := utils.GenerateRandomString()
-		secret = utils.Encrypt(pwd, r.Salt, utils.SHA256)
+		sec, pwd, _, err := robot.CreateSec(r.Salt)
+		if err != nil {
+			return rAPI.SendError(ctx, err)
+		}
+		secret = sec
 		robotSec.Secret = pwd
 	}
 
@@ -255,7 +275,7 @@ func (rAPI *robotAPI) requireAccess(ctx context.Context, level string, projectID
 // more validation
 func (rAPI *robotAPI) validate(d int64, level string, permissions []*models.RobotPermission) error {
 	if !isValidDuration(d) {
-		return errors.New(nil).WithMessage("bad request error duration input: %d", d).WithCode(errors.BadRequestCode)
+		return errors.New(nil).WithMessage("bad request error duration input: %d, duration must be either -1(Never) or a positive integer", d).WithCode(errors.BadRequestCode)
 	}
 
 	if !isValidLevel(level) {
@@ -276,53 +296,69 @@ func (rAPI *robotAPI) validate(d int64, level string, permissions []*models.Robo
 	if level == robot.LEVELPROJECT && len(permissions) > 1 {
 		return errors.New(nil).WithMessage("bad request permission").WithCode(errors.BadRequestCode)
 	}
-	return nil
-}
 
-// only disable can be updated for v1 robot
-func (rAPI *robotAPI) updateV1Robot(ctx context.Context, params operation.UpdateRobotParams, r *robot.Robot) error {
-	if err := rAPI.requireAccess(ctx, params.Robot.Level, r.ProjectID, rbac.ActionUpdate); err != nil {
-		return err
+	// to validate the access scope
+	for _, perm := range permissions {
+		if perm.Kind == robot.LEVELSYSTEM {
+			polices := rbac.PoliciesMap["System"]
+			for _, acc := range perm.Access {
+				if !containsAccess(polices, acc) {
+					return errors.New(nil).WithMessage("bad request permission: %s:%s", acc.Resource, acc.Action).WithCode(errors.BadRequestCode)
+				}
+			}
+		} else if perm.Kind == robot.LEVELPROJECT {
+			polices := rbac.PoliciesMap["Project"]
+			for _, acc := range perm.Access {
+				if !containsAccess(polices, acc) {
+					return errors.New(nil).WithMessage("bad request permission: %s:%s", acc.Resource, acc.Action).WithCode(errors.BadRequestCode)
+				}
+			}
+		} else {
+			return errors.New(nil).WithMessage("bad request permission level: %s", perm.Kind).WithCode(errors.BadRequestCode)
+		}
 	}
-	r.Disabled = params.Robot.Disable
-	r.Description = params.Robot.Description
-	if err := rAPI.robotCtl.Update(ctx, r, &robot.Option{
-		WithPermission: false,
-	}); err != nil {
-		return err
-	}
+
 	return nil
 }
 
 func (rAPI *robotAPI) updateV2Robot(ctx context.Context, params operation.UpdateRobotParams, r *robot.Robot) error {
-	if err := rAPI.validate(params.Robot.Duration, params.Robot.Level, params.Robot.Permissions); err != nil {
+	if params.Robot.Duration == nil {
+		params.Robot.Duration = &r.Duration
+	}
+	if err := rAPI.validate(*params.Robot.Duration, params.Robot.Level, params.Robot.Permissions); err != nil {
 		return err
 	}
-
+	if r.Level != robot.LEVELSYSTEM {
+		projectID, err := getProjectID(ctx, params.Robot.Permissions[0].Namespace)
+		if err != nil {
+			return err
+		}
+		if r.ProjectID != projectID {
+			return errors.BadRequestError(nil).WithMessage("cannot update the project id of robot")
+		}
+	}
 	if err := rAPI.requireAccess(ctx, params.Robot.Level, params.Robot.Permissions[0].Namespace, rbac.ActionUpdate); err != nil {
 		return err
 	}
-
 	if params.Robot.Level != r.Level || params.Robot.Name != r.Name {
 		return errors.BadRequestError(nil).WithMessage("cannot update the level or name of robot")
 	}
 
-	if r.Duration != params.Robot.Duration {
-		r.Duration = params.Robot.Duration
-		if params.Robot.Duration == -1 {
+	if r.Duration != *params.Robot.Duration {
+		r.Duration = *params.Robot.Duration
+		if *params.Robot.Duration == -1 {
 			r.ExpiresAt = -1
-		} else if params.Robot.Duration == 0 {
-			r.Duration = int64(config.RobotTokenDuration(ctx))
-			r.ExpiresAt = r.CreationTime.AddDate(0, 0, config.RobotTokenDuration(ctx)).Unix()
 		} else {
-			r.ExpiresAt = r.CreationTime.AddDate(0, 0, int(params.Robot.Duration)).Unix()
+			r.ExpiresAt = r.CreationTime.AddDate(0, 0, int(*params.Robot.Duration)).Unix()
 		}
 	}
 
 	r.Description = params.Robot.Description
 	r.Disabled = params.Robot.Disable
 	if len(params.Robot.Permissions) != 0 {
-		lib.JSONCopy(&r.Permissions, params.Robot.Permissions)
+		if err := lib.JSONCopy(&r.Permissions, params.Robot.Permissions); err != nil {
+			log.Warningf("failed to call JSONCopy on robot permission when updateV2Robot, error: %v", err)
+		}
 	}
 
 	if err := rAPI.robotCtl.Update(ctx, r, &robot.Option{
@@ -338,17 +374,7 @@ func isValidLevel(l string) bool {
 }
 
 func isValidDuration(d int64) bool {
-	return d >= int64(-1) && d < math.MaxInt32
-}
-
-func isValidSec(sec string) bool {
-	hasLower := regexp.MustCompile(`[a-z]`)
-	hasUpper := regexp.MustCompile(`[A-Z]`)
-	hasNumber := regexp.MustCompile(`[0-9]`)
-	if len(sec) >= 8 && hasLower.MatchString(sec) && hasUpper.MatchString(sec) && hasNumber.MatchString(sec) {
-		return true
-	}
-	return false
+	return d == -1 || (d > 0 && d < math.MaxInt32)
 }
 
 // validateName validates the robot name, especially '+' cannot be a valid character
@@ -359,4 +385,13 @@ func validateName(name string) error {
 		return errors.BadRequestError(nil).WithMessage("robot name is not in lower case or contains illegal characters")
 	}
 	return nil
+}
+
+func containsAccess(policies []*types.Policy, item *models.Access) bool {
+	for _, po := range policies {
+		if po.Resource.String() == item.Resource && po.Action.String() == item.Action {
+			return true
+		}
+	}
+	return false
 }

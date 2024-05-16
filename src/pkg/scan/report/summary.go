@@ -19,7 +19,6 @@ import (
 
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/errors"
-	models2 "github.com/goharbor/harbor/src/pkg/allowlist/models"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scan"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 	"github.com/goharbor/harbor/src/pkg/scan/vuln"
@@ -29,19 +28,10 @@ import (
 type Options struct {
 	// If it is set, the returned report will contains artifact digest for the vulnerabilities
 	ArtifactDigest string
-	// If it is set, the returned summary will not count the CVEs in the list in.
-	CVEAllowlist models2.CVESet
 }
 
 // Option for getting the report w/ summary with func template way.
 type Option func(options *Options)
-
-// WithCVEAllowlist is an option of setting CVE allowlist.
-func WithCVEAllowlist(set *models2.CVESet) Option {
-	return func(options *Options) {
-		options.CVEAllowlist = *set
-	}
-}
 
 // WithArtifactDigest is an option of setting artifact digest
 func WithArtifactDigest(artifactDigest string) Option {
@@ -106,12 +96,7 @@ func GenerateSummary(r *scan.Report, options ...Option) (interface{}, error) {
 type SummaryGenerator func(r *scan.Report, options ...Option) (interface{}, error)
 
 // GenerateNativeSummary generates the report summary for the native report.
-func GenerateNativeSummary(r *scan.Report, options ...Option) (interface{}, error) {
-	ops := &Options{}
-	for _, op := range options {
-		op(ops)
-	}
-
+func GenerateNativeSummary(r *scan.Report, _ ...Option) (interface{}, error) {
 	sum := &vuln.NativeReportSummary{}
 	sum.ReportID = r.UUID
 	sum.StartTime = r.StartTime
@@ -119,9 +104,6 @@ func GenerateNativeSummary(r *scan.Report, options ...Option) (interface{}, erro
 	sum.Duration = r.EndTime.Unix() - r.StartTime.Unix()
 	if sum.Duration < 0 {
 		sum.Duration = 0
-	}
-	if len(ops.CVEAllowlist) > 0 {
-		sum.CVEBypassed = make([]string, 0)
 	}
 
 	sum.ScanStatus = job.ErrorStatus.String()
@@ -131,9 +113,8 @@ func GenerateNativeSummary(r *scan.Report, options ...Option) (interface{}, erro
 
 	sum.TotalCount = 1
 
-	// If the status is not success/stopped, there will not be any report.
-	if r.Status != job.SuccessStatus.String() &&
-		r.Status != job.StoppedStatus.String() {
+	// If the status is not success, there will not be any report.
+	if r.Status != job.SuccessStatus.String() {
 		return sum, nil
 	}
 
@@ -157,7 +138,7 @@ func GenerateNativeSummary(r *scan.Report, options ...Option) (interface{}, erro
 	sum.Severity = rp.Severity
 	sum.Scanner = rp.Scanner
 
-	sum.UpdateSeveritySummaryAndByPassed(rp.GetVulnerabilityItemList(), ops.CVEAllowlist)
+	sum.UpdateSeveritySummary(rp.GetVulnerabilityItemList())
 
 	return sum, nil
 }

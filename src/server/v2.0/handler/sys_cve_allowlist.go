@@ -18,11 +18,11 @@ import (
 	"context"
 
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/pkg/allowlist"
 	"github.com/goharbor/harbor/src/pkg/allowlist/models"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
-
 	"github.com/goharbor/harbor/src/server/v2.0/restapi/operations/system_cve_allowlist"
 )
 
@@ -38,7 +38,7 @@ func newSystemCVEAllowListAPI() *systemCVEAllowListAPI {
 }
 
 func (s systemCVEAllowListAPI) PutSystemCVEAllowlist(ctx context.Context, params system_cve_allowlist.PutSystemCVEAllowlistParams) middleware.Responder {
-	if err := s.RequireSystemAccess(ctx, rbac.ActionUpdate, rbac.ResourceSystemCVEAllowList); err != nil {
+	if err := s.RequireSystemAccess(ctx, rbac.ActionUpdate, rbac.ResourceConfiguration); err != nil {
 		return s.SendError(ctx, err)
 	}
 	l := models.CVEAllowlist{}
@@ -52,7 +52,7 @@ func (s systemCVEAllowListAPI) PutSystemCVEAllowlist(ctx context.Context, params
 	return system_cve_allowlist.NewPutSystemCVEAllowlistOK()
 }
 
-func (s systemCVEAllowListAPI) GetSystemCVEAllowlist(ctx context.Context, params system_cve_allowlist.GetSystemCVEAllowlistParams) middleware.Responder {
+func (s systemCVEAllowListAPI) GetSystemCVEAllowlist(ctx context.Context, _ system_cve_allowlist.GetSystemCVEAllowlistParams) middleware.Responder {
 	if err := s.RequireAuthenticated(ctx); err != nil {
 		return s.SendError(ctx, err)
 	}

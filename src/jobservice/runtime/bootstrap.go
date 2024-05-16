@@ -19,9 +19,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/goharbor/harbor/src/jobservice/job/impl/gdpr"
+
+	"github.com/gomodule/redigo/redis"
 
 	"github.com/goharbor/harbor/src/jobservice/api"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
@@ -34,22 +39,28 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/job/impl/gc"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/legacy"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/notification"
+	"github.com/goharbor/harbor/src/jobservice/job/impl/purge"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/replication"
 	"github.com/goharbor/harbor/src/jobservice/job/impl/sample"
+	"github.com/goharbor/harbor/src/jobservice/job/impl/scandataexport"
+	"github.com/goharbor/harbor/src/jobservice/job/impl/systemartifact"
 	"github.com/goharbor/harbor/src/jobservice/lcm"
 	"github.com/goharbor/harbor/src/jobservice/logger"
 	"github.com/goharbor/harbor/src/jobservice/mgt"
 	"github.com/goharbor/harbor/src/jobservice/migration"
+	"github.com/goharbor/harbor/src/jobservice/period"
+	sync2 "github.com/goharbor/harbor/src/jobservice/sync"
 	"github.com/goharbor/harbor/src/jobservice/worker"
 	"github.com/goharbor/harbor/src/jobservice/worker/cworker"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/metric"
 	redislib "github.com/goharbor/harbor/src/lib/redis"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat"
+	"github.com/goharbor/harbor/src/pkg/queuestatus"
 	"github.com/goharbor/harbor/src/pkg/retention"
 	"github.com/goharbor/harbor/src/pkg/scan"
 	"github.com/goharbor/harbor/src/pkg/scheduler"
-	"github.com/gomodule/redigo/redis"
+	"github.com/goharbor/harbor/src/pkg/task"
 )
 
 const (
@@ -59,7 +70,9 @@ const (
 )
 
 // JobService ...
-var JobService = &Bootstrap{}
+var JobService = &Bootstrap{
+	syncEnabled: true,
+}
 
 // workerPoolID
 var workerPoolID string
@@ -67,6 +80,7 @@ var workerPoolID string
 // Bootstrap is coordinating process to help load and start the other components to serve.
 type Bootstrap struct {
 	jobContextInitializer job.ContextInitializer
+	syncEnabled           bool
 }
 
 // SetJobContextInitializer set the job context initializer
@@ -103,6 +117,7 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 	var (
 		backendWorker worker.Interface
 		manager       mgt.Manager
+		syncWorker    *sync2.Worker
 	)
 	if cfg.PoolConfig.Backend == config.JobServicePoolBackendRedis {
 		// Number of workers
@@ -123,7 +138,8 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 		// Create stats manager
 		manager = mgt.NewManager(ctx, namespace, redisPool)
 		// Create hook agent, it's a singleton object
-		hookAgent := hook.NewAgent(rootContext, namespace, redisPool)
+		// the retryConcurrency keep same with worker num
+		hookAgent := hook.NewAgent(rootContext, namespace, redisPool, workerNum)
 		hookCallback := func(URL string, change *job.StatusChange) error {
 			msg := fmt.Sprintf(
 				"status change: job=%s, status=%s, revision=%d",
@@ -175,6 +191,31 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 		if err = lcmCtl.Serve(); err != nil {
 			return errors.Errorf("start life cycle controller error: %s", err)
 		}
+
+		// Initialize sync worker
+		if bs.syncEnabled {
+			syncWorker = sync2.New(3).
+				WithContext(rootContext).
+				UseManager(manager).
+				UseScheduler(period.NewScheduler(rootContext.SystemContext, namespace, redisPool, lcmCtl)).
+				WithCoreInternalAddr(strings.TrimSuffix(config.GetCoreURL(), "/")).
+				UseCoreScheduler(scheduler.Sched).
+				UseCoreExecutionManager(task.ExecMgr).
+				UseCoreTaskManager(task.Mgr).
+				UseQueueStatusManager(queuestatus.Mgr).
+				UseMonitorRedisClient(cfg.PoolConfig.RedisPoolCfg).
+				WithPolicyLoader(func() ([]*period.Policy, error) {
+					conn := redisPool.Get()
+					defer conn.Close()
+
+					return period.Load(namespace, conn)
+				})
+			// Start sync worker
+			// Not block the regular process.
+			if err := syncWorker.Start(); err != nil {
+				logger.Error(err)
+			}
+		}
 	} else {
 		return errors.Errorf("worker backend '%s' is not supported", cfg.PoolConfig.Backend)
 	}
@@ -188,7 +229,7 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 
 	// Listen to the system signals
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM, os.Kill)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	terminated := false
 	go func(errChan chan error) {
 		defer func() {
@@ -225,7 +266,7 @@ func (bs *Bootstrap) LoadAndRun(ctx context.Context, cancel context.CancelFunc) 
 		sig <- os.Interrupt
 	}
 
-	// Wait everyone exit
+	// Wait everyone exits.
 	rootContext.WG.Wait()
 
 	return
@@ -275,20 +316,25 @@ func (bs *Bootstrap) loadAndRunRedisWorkerPool(
 			// Only for debugging and testing purpose
 			job.SampleJob: (*sample.Job)(nil),
 			// Functional jobs
-			job.ImageScanJob:           (*scan.Job)(nil),
-			job.GarbageCollection:      (*gc.GarbageCollector)(nil),
-			job.Replication:            (*replication.Replication)(nil),
-			job.Retention:              (*retention.Job)(nil),
-			scheduler.JobNameScheduler: (*scheduler.PeriodicJob)(nil),
-			job.WebhookJob:             (*notification.WebhookJob)(nil),
-			job.SlackJob:               (*notification.SlackJob)(nil),
-			job.P2PPreheat:             (*preheat.Job)(nil),
+			job.ImageScanJobVendorType:      (*scan.Job)(nil),
+			job.PurgeAuditVendorType:        (*purge.Job)(nil),
+			job.GarbageCollectionVendorType: (*gc.GarbageCollector)(nil),
+			job.ReplicationVendorType:       (*replication.Replication)(nil),
+			job.RetentionVendorType:         (*retention.Job)(nil),
+			scheduler.JobNameScheduler:      (*scheduler.PeriodicJob)(nil),
+			job.WebhookJobVendorType:        (*notification.WebhookJob)(nil),
+			job.SlackJobVendorType:          (*notification.SlackJob)(nil),
+			job.P2PPreheatVendorType:        (*preheat.Job)(nil),
+			job.ScanDataExportVendorType:    (*scandataexport.ScanDataExport)(nil),
 			// In v2.2 we migrate the scheduled replication, garbage collection and scan all to
 			// the scheduler mechanism, the following three jobs are kept for the legacy jobs
 			// and they can be removed after several releases
-			"IMAGE_REPLICATE": (*legacy.ReplicationScheduler)(nil),
-			"IMAGE_GC":        (*legacy.GarbageCollectionScheduler)(nil),
-			"IMAGE_SCAN_ALL":  (*legacy.ScanAllScheduler)(nil),
+			"IMAGE_REPLICATE":                    (*legacy.ReplicationScheduler)(nil),
+			"IMAGE_GC":                           (*legacy.GarbageCollectionScheduler)(nil),
+			"IMAGE_SCAN_ALL":                     (*legacy.ScanAllScheduler)(nil),
+			job.SystemArtifactCleanupVendorType:  (*systemartifact.Cleanup)(nil),
+			job.ExecSweepVendorType:              (*task.SweepJob)(nil),
+			job.AuditLogsGDPRCompliantVendorType: (*gdpr.AuditLogsDataMasking)(nil),
 		}); err != nil {
 		// exit
 		return nil, err
@@ -301,15 +347,16 @@ func (bs *Bootstrap) loadAndRunRedisWorkerPool(
 
 // Get a redis connection pool
 func (bs *Bootstrap) getRedisPool(redisPoolConfig *config.RedisPoolConfig) *redis.Pool {
-	if pool, err := redislib.GetRedisPool("JobService", redisPoolConfig.RedisURL, &redislib.PoolParam{
+	pool, err := redislib.GetRedisPool("JobService", redisPoolConfig.RedisURL, &redislib.PoolParam{
 		PoolMaxIdle:           6,
 		PoolIdleTimeout:       time.Duration(redisPoolConfig.IdleTimeoutSecond) * time.Second,
 		DialConnectionTimeout: dialConnectionTimeout,
 		DialReadTimeout:       dialReadTimeout,
 		DialWriteTimeout:      dialWriteTimeout,
-	}); err != nil {
+	})
+	if err != nil {
 		panic(err)
-	} else {
-		return pool
 	}
+	// else
+	return pool
 }

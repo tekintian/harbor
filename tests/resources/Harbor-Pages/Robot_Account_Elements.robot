@@ -21,12 +21,12 @@ ${sys_robot_account_name_input}              //*[@id='name']
 ${sys_robot_account_expiration_type_select}  //*[@id='expiration-type']
 ${sys_robot_account_expiration_input}        //*[@id='robotTokenExpiration']
 ${sys_robot_account_description_textarea}    //*[@id='description']
-${sys_robot_account_coverall_chb_input}  xpath=//input[@id='coverAll']
-${sys_robot_account_coverall_chb}            //clr-checkbox-wrapper[contains(@class, 'clr-checkbox-wrapper')]/label[contains(@for, 'coverAll')]
+${sys_robot_account_coverall_chb_input}      //input[@id='coverAll']
+${sys_robot_account_coverall_chb}            //clr-checkbox-wrapper[contains(@class, 'clr-checkbox-wrapper')]/label[contains(@class,'clr-control-label') and contains(@for, 'coverAll')]
 ${sys_robot_account_permission_list_btn}     //form/section//clr-dropdown/button
 ${save_sys_robot_account_btn}                //*[@id='system-robot-save']
-${save_sys_robot_project_filter_chb}         //clr-dg-string-filter/clr-dg-filter//clr-icon
+${save_sys_robot_export_to_file_btn}         //section//button
+${save_sys_robot_project_filter_chb}         //clr-dg-string-filter/clr-dg-filter//cds-icon
 ${save_sys_robot_project_filter_input}       //input[contains(@name, 'search')]
-${save_sys_robot_project_filter_close_btn}   //button/clr-icon[contains(@title, 'Close')]
+${save_sys_robot_project_filter_close_btn}   //button/cds-icon[contains(@title, 'Close')]
 ${save_sys_robot_project_paste_icon}         //hbr-copy-input//clr-icon
-

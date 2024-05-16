@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package tencentcr
 
 import (
@@ -5,10 +19,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"strconv"
 	"strings"
 
-	"github.com/docker/distribution/registry/client/auth/challenge"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/regions"
+	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
+
 	commonhttp "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
@@ -16,18 +36,18 @@ import (
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/pkg/reg/util"
 	"github.com/goharbor/harbor/src/pkg/registry/auth/bearer"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/profile"
-	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/regions"
-	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
 )
 
 var (
-	errInvalidTcrEndpoint    error = errors.New("[tencent-tcr.newAdapter] Invalid TCR instance endpoint")
-	errPingTcrEndpointFailed error = errors.New("[tencent-tcr.newAdapter] Ping TCR instance endpoint failed")
+	errInvalidTcrEndpoint = errors.New("[tencent-tcr.newAdapter] Invalid TCR instance endpoint")
 )
 
 func init() {
+	var envTcrQPSLimit, _ = strconv.Atoi(os.Getenv("TCR_QPS_LIMIT"))
+	if envTcrQPSLimit > 1 && envTcrQPSLimit < tcrQPSLimit {
+		tcrQPSLimit = envTcrQPSLimit
+	}
+
 	if err := adp.RegisterFactory(model.RegistryTypeTencentTcr, new(factory)); err != nil {
 		log.Errorf("failed to register factory for %s: %v", model.RegistryTypeTencentTcr, err)
 		return
@@ -53,7 +73,7 @@ func (f *factory) AdapterPattern() *model.AdapterPattern {
 }
 
 func getAdapterInfo() *model.AdapterPattern {
-	return nil
+	return &model.AdapterPattern{}
 }
 
 type adapter struct {
@@ -82,12 +102,15 @@ func newAdapter(registry *model.Registry) (a *adapter, err error) {
 	var registryURL *url.URL
 	registryURL, _ = url.Parse(registry.URL)
 
-	if strings.Index(registryURL.Host, ".tencentcloudcr.com") < 0 {
-		log.Errorf("[tencent-tcr.newAdapter] errInvalidTcrEndpoint=%v", err)
-		return nil, errInvalidTcrEndpoint
+	// only validate registryURL.Host in non-UT scenario
+	if os.Getenv("UTTEST") != "true" {
+		if !strings.Contains(registryURL.Host, ".tencentcloudcr.com") {
+			log.Errorf("[tencent-tcr.newAdapter] errInvalidTcrEndpoint=%v", err)
+			return nil, errInvalidTcrEndpoint
+		}
 	}
 
-	realm, service, err := ping(registry)
+	realm, service, err := util.Ping(registry)
 	log.Debugf("[tencent-tcr.newAdapter] realm=%s, service=%s error=%v", realm, service, err)
 	if err != nil {
 		log.Errorf("[tencent-tcr.newAdapter] ping failed. error=%v", err)
@@ -112,7 +135,7 @@ func newAdapter(registry *model.Registry) (a *adapter, err error) {
 			Values: []*string{common.StringPtr(strings.ReplaceAll(registryURL.Host, ".tencentcloudcr.com", ""))},
 		},
 	}
-	var resp = tcr.NewDescribeInstancesResponse()
+	var resp *tcr.DescribeInstancesResponse
 	resp, err = client.DescribeInstances(req)
 	if err != nil {
 		log.Errorf("DescribeInstances error=%s", err.Error())
@@ -127,13 +150,17 @@ func newAdapter(registry *model.Registry) (a *adapter, err error) {
 		registry.URL, registryURL.Host, *instanceInfo.PublicDomain, *instanceInfo.RegionName, *instanceInfo.RegistryId)
 
 	// rebuild TCR SDK client
-	client, err = tcr.NewClient(tcrCredential, *instanceInfo.RegionName, cfp)
+	client = &tcr.Client{}
+	client.Init(*instanceInfo.RegionName).
+		WithCredential(tcrCredential).
+		WithProfile(cfp).
+		WithHttpTransport(newRateLimitedTransport(tcrQPSLimit, http.DefaultTransport))
 	if err != nil {
 		return
 	}
 
 	var credential = NewAuth(instanceInfo.RegistryId, client)
-	var transport = util.GetHTTPTransport(registry.Insecure)
+	var transport = commonhttp.GetHTTPTransport(commonhttp.WithInsecure(registry.Insecure))
 	var authorizer = bearer.NewAuthorizer(realm, service, credential, transport)
 
 	return &adapter{
@@ -152,32 +179,11 @@ func newAdapter(registry *model.Registry) (a *adapter, err error) {
 	}, nil
 }
 
-func ping(registry *model.Registry) (string, string, error) {
-	client := &http.Client{
-		Transport: util.GetHTTPTransport(registry.Insecure),
-	}
-
-	resp, err := client.Get(registry.URL + "/v2/")
-	log.Debugf("[tencent-tcr.ping] error=%v", err)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	challenges := challenge.ResponseChallenges(resp)
-	for _, challenge := range challenges {
-		if challenge.Scheme == "bearer" {
-			return challenge.Parameters["realm"], challenge.Parameters["service"], nil
-		}
-	}
-	return "", "", fmt.Errorf("[tencent-tcr.ping] bearer auth scheme isn't supported: %v", challenges)
-}
-
 func (a *adapter) Info() (info *model.RegistryInfo, err error) {
 	info = &model.RegistryInfo{
 		Type: model.RegistryTypeTencentTcr,
 		SupportedResourceTypes: []string{
 			model.ResourceTypeImage,
-			model.ResourceTypeChart,
 		},
 		SupportedResourceFilters: []*model.FilterStyle{
 			{
@@ -226,7 +232,6 @@ func (a *adapter) PrepareForPush(resources []*model.Resource) (err error) {
 		if err != nil {
 			return
 		}
-		return
 	}
 
 	return

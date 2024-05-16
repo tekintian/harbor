@@ -34,6 +34,11 @@ func TestMatch(t *testing.T) {
 			match:   true,
 		},
 		{
+			pattern: "",
+			str:     "",
+			match:   true,
+		},
+		{
 			pattern: "*",
 			str:     "library",
 			match:   true,
@@ -67,6 +72,16 @@ func TestMatch(t *testing.T) {
 			pattern: "1.?",
 			str:     "1.01",
 			match:   false,
+		},
+		{
+			pattern: "v2.[4-6].*", // match v2.4.*~v2.7.* version
+			str:     "v2.4.0",
+			match:   true,
+		},
+		{
+			pattern: "v2.[4-7].*", // match v2.4.*~v2.7.* version
+			str:     "v2.7.0",
+			match:   true,
 		},
 	}
 	for _, c := range cases {

@@ -1,10 +1,6 @@
 package gitlab
 
 import (
-	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
-	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +8,12 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
+	"github.com/goharbor/harbor/src/pkg/reg/model"
 )
 
 func mustWriteHTTPResponse(t *testing.T, w io.Writer, fixturePath string) {
@@ -36,16 +38,10 @@ func getServer(t *testing.T) *httptest.Server {
 		w.Header().Set("X-Next-Page", "")
 
 		switch search {
-		case "dev-docker":
+		case "library/dev-docker", "library", "library/", "dev-docker/", "dev-docker":
 			mustWriteHTTPResponse(t, w, "testdata/projects/dev-docker.json")
 			break
-		case "dev-":
-			mustWriteHTTPResponse(t, w, "testdata/projects/dev-docker.json")
-			break
-		case "-docker":
-			mustWriteHTTPResponse(t, w, "testdata/projects/-docker.json")
-			break
-		case "":
+		case "", "library/dockers":
 			mustWriteHTTPResponse(t, w, "testdata/projects/all.json")
 			break
 		default:
@@ -122,4 +118,17 @@ func TestFetchImages(t *testing.T) {
 		assertions.Len(resources, v, k, v)
 	}
 
+	resources, err := adapter.FetchArtifacts([]*model.Filter{
+		{
+			Type:  model.FilterTypeName,
+			Value: "library/dockers",
+		},
+		{
+			Type:  model.FilterTypeTag,
+			Value: "{late*,v2}",
+		},
+	})
+	require.Nil(t, err)
+	require.Equal(t, 1, len(resources))
+	require.Equal(t, 2, len(resources[0].Metadata.Vtags))
 }

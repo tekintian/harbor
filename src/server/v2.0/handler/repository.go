@@ -19,18 +19,22 @@ import (
 	"fmt"
 
 	"github.com/go-openapi/runtime/middleware"
-	cmodels "github.com/goharbor/harbor/src/common/models"
+
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/common/security/local"
+	"github.com/goharbor/harbor/src/common/security/robot"
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event/metadata"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/repository"
+	robotCtr "github.com/goharbor/harbor/src/controller/robot"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/notification"
+	pkgModels "github.com/goharbor/harbor/src/pkg/project/models"
+	repomodel "github.com/goharbor/harbor/src/pkg/repository/model"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/repository"
@@ -51,7 +55,7 @@ type repositoryAPI struct {
 	artCtl  artifact.Controller
 }
 
-func (r *repositoryAPI) Prepare(ctx context.Context, operation string, params interface{}) middleware.Responder {
+func (r *repositoryAPI) Prepare(ctx context.Context, _ string, params interface{}) middleware.Responder {
 	if err := unescapePathParams(params, "RepositoryName"); err != nil {
 		r.SendError(ctx, err)
 	}
@@ -115,13 +119,32 @@ func (r *repositoryAPI) listAuthorizedProjectIDs(ctx context.Context) ([]int64, 
 		Keywords: map[string]interface{}{},
 	}
 	if secCtx.IsAuthenticated() {
-		switch secCtx.(type) {
+		switch v := secCtx.(type) {
 		case *local.SecurityContext:
-			currentUser := secCtx.(*local.SecurityContext).User()
+			currentUser := v.User()
 			query.Keywords["member"] = &project.MemberQuery{
 				UserID:     currentUser.UserID,
 				GroupIDs:   currentUser.GroupIDs,
 				WithPublic: true,
+			}
+		case *robot.SecurityContext:
+			// for the system level robot that covers all the project, see it as the system admin.
+			var coverAll bool
+			var names []string
+			r := v.User()
+			for _, p := range r.Permissions {
+				if p.Scope == robotCtr.SCOPEALLPROJECT {
+					coverAll = true
+					break
+				}
+				names = append(names, p.Namespace)
+			}
+			if !coverAll {
+				namesQuery := &pkgModels.NamesQuery{
+					Names:      names,
+					WithPublic: true,
+				}
+				query.Keywords["names"] = namesQuery
 			}
 		default:
 			query.Keywords["public"] = true
@@ -176,7 +199,7 @@ func (r *repositoryAPI) ListRepositories(ctx context.Context, params operation.L
 }
 
 func (r *repositoryAPI) GetRepository(ctx context.Context, params operation.GetRepositoryParams) middleware.Responder {
-	if err := r.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionList, rbac.ResourceRepository); err != nil {
+	if err := r.RequireProjectAccess(ctx, params.ProjectName, rbac.ActionRead, rbac.ResourceRepository); err != nil {
 		return r.SendError(ctx, err)
 	}
 	repository, err := r.repoCtl.GetByName(ctx, fmt.Sprintf("%s/%s", params.ProjectName, params.RepositoryName))
@@ -209,8 +232,9 @@ func (r *repositoryAPI) UpdateRepository(ctx context.Context, params operation.U
 	if err != nil {
 		return r.SendError(ctx, err)
 	}
-	if err := r.repoCtl.Update(ctx, &cmodels.RepoRecord{
+	if err := r.repoCtl.Update(ctx, &repomodel.RepoRecord{
 		RepositoryID: repository.RepositoryID,
+		Name:         repository.Name,
 		Description:  params.Repository.Description,
 	}, "Description"); err != nil {
 		return r.SendError(ctx, err)

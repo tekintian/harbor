@@ -18,24 +18,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/goharbor/harbor/src/pkg/registry/auth/basic"
-
-	"github.com/goharbor/harbor/src/pkg/reg/filter"
-	"github.com/goharbor/harbor/src/pkg/reg/util"
-	"github.com/goharbor/harbor/src/pkg/registry"
-
-	"github.com/goharbor/harbor/src/common/utils"
-
 	common_http "github.com/goharbor/harbor/src/common/http"
+	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
+	"github.com/goharbor/harbor/src/pkg/reg/filter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
+	"github.com/goharbor/harbor/src/pkg/reg/util"
+	"github.com/goharbor/harbor/src/pkg/registry"
+	"github.com/goharbor/harbor/src/pkg/registry/auth/basic"
 )
 
 func init() {
@@ -105,7 +100,6 @@ func newAdapter(registry *model.Registry) (adp.Adapter, error) {
 		registry: registry,
 		client:   newClient(registry),
 	}, nil
-
 }
 
 // PrepareForPush creates local docker repository in jfrog artifactory
@@ -289,7 +283,7 @@ func (a *adapter) PushBlob(repository, digest string, size int64, blob io.Reader
 	if err != nil {
 		return err
 	}
-	rangeSize := strconv.Itoa(int(size))
+	rangeSize := fmt.Sprintf("%d", size)
 	req.Header.Set("Content-Length", rangeSize)
 	req.Header.Set("Content-Range", fmt.Sprintf("0-%s", rangeSize))
 	req.Header.Set("Content-Type", "application/octet-stream")
@@ -305,7 +299,7 @@ func (a *adapter) PushBlob(repository, digest string, size int64, blob io.Reader
 		return a.ackPushBlob(repository, digest, location, rangeSize)
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -323,7 +317,7 @@ func (a *adapter) preparePushBlob(repository string) (string, error) {
 		return "", err
 	}
 
-	req.Header.Set(http.CanonicalHeaderKey("Content-Length"), "0")
+	req.Header.Set("Content-Length", "0")
 	resp, err := a.client.client.Do(req)
 	if err != nil {
 		return "", err
@@ -332,10 +326,10 @@ func (a *adapter) preparePushBlob(repository string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusAccepted {
-		return resp.Header.Get(http.CanonicalHeaderKey("Docker-Upload-Uuid")), nil
+		return resp.Header.Get("Docker-Upload-Uuid"), nil
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -348,7 +342,7 @@ func (a *adapter) preparePushBlob(repository string) (string, error) {
 	return "", err
 }
 
-func (a *adapter) ackPushBlob(repository, digest, location, size string) error {
+func (a *adapter) ackPushBlob(repository, digest, location, _ string) error {
 	url := fmt.Sprintf("%s/v2/%s/blobs/uploads/%s?digest=%s", a.registry.URL, repository, location, digest)
 	req, err := http.NewRequest(http.MethodPut, url, nil)
 	if err != nil {
@@ -366,7 +360,7 @@ func (a *adapter) ackPushBlob(repository, digest, location, size string) error {
 		return nil
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}

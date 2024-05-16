@@ -15,28 +15,29 @@
 package artifact
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	common_dao "github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/project"
 	repctl "github.com/goharbor/harbor/src/controller/replication"
 	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/orm"
 	_ "github.com/goharbor/harbor/src/pkg/config/db"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
 	"github.com/goharbor/harbor/src/pkg/notification"
 	policy_model "github.com/goharbor/harbor/src/pkg/notification/policy/model"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	rpModel "github.com/goharbor/harbor/src/pkg/reg/model"
 	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
 	replicationtesting "github.com/goharbor/harbor/src/testing/controller/replication"
 	"github.com/goharbor/harbor/src/testing/mock"
 	testingnotification "github.com/goharbor/harbor/src/testing/pkg/notification/policy"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestReplicationHandler_Handle(t *testing.T) {
@@ -67,7 +68,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 		},
 	}, nil)
 
-	mock.OnAnything(projectCtl, "GetByName").Return(&models.Project{ProjectID: 1}, nil)
+	mock.OnAnything(projectCtl, "GetByName").Return(&proModels.Project{ProjectID: 1}, nil)
 
 	handler := &ReplicationHandler{}
 
@@ -108,7 +109,7 @@ func TestReplicationHandler_Handle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := handler.Handle(context.TODO(), tt.args.data)
+			err := handler.Handle(orm.Context(), tt.args.data)
 			if tt.wantErr {
 				require.NotNil(t, err, "Error: %s", err)
 				return
@@ -127,4 +128,39 @@ func TestReplicationHandler_IsStateful(t *testing.T) {
 func TestReplicationHandler_Name(t *testing.T) {
 	handler := &ReplicationHandler{}
 	assert.Equal(t, "ReplicationWebhook", handler.Name())
+}
+
+func TestIsLocalRegistry(t *testing.T) {
+	// local registry should return true
+	reg1 := &rpModel.Registry{
+		Type: "harbor",
+		Name: "Local",
+		URL:  config.InternalCoreURL(),
+	}
+	assert.True(t, isLocalRegistry(reg1))
+	// non-local registry should return false
+	reg2 := &rpModel.Registry{
+		Type: "docker-registry",
+		Name: "distribution",
+		URL:  "http://127.0.0.1:5000",
+	}
+	assert.False(t, isLocalRegistry(reg2))
+}
+
+func TestReplicationHandler_ShortResourceName(t *testing.T) {
+	namespace, resource := getMetadataFromResource("busybox:v1")
+	assert.Equal(t, "", namespace)
+	assert.Equal(t, "busybox:v1", resource)
+}
+
+func TestReplicationHandler_NormalResourceName(t *testing.T) {
+	namespace, resource := getMetadataFromResource("library/busybox:v1")
+	assert.Equal(t, "library", namespace)
+	assert.Equal(t, "busybox:v1", resource)
+}
+
+func TestReplicationHandler_LongResourceName(t *testing.T) {
+	namespace, resource := getMetadataFromResource("library/bitnami/fluentd:1.13.3-debian-10-r0")
+	assert.Equal(t, "library", namespace)
+	assert.Equal(t, "bitnami/fluentd:1.13.3-debian-10-r0", resource)
 }

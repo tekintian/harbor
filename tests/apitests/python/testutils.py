@@ -7,14 +7,15 @@ sys.path.insert(0, os.environ.get("SWAGGER_CLIENT_PATH", ''))
 path=os.getcwd() + "/library"
 sys.path.insert(0, path)
 
-
 path=os.getcwd() + "/tests/apitests/python/library"
 sys.path.insert(0, path)
 path=os.getcwd() + "/tests/apitests/python/"
 sys.path.insert(0, path)
 print(sys.path)
+
+files_directory = os.getcwd() + "/tests/files/"
+
 import v2_swagger_client
-import swagger_client.models
 
 admin_user = "admin"
 admin_pwd = "Harbor12345"
@@ -26,24 +27,14 @@ ADMIN_CLIENT=dict(endpoint = os.environ.get("HARBOR_HOST_SCHEMA", "https")+ "://
 CHART_API_CLIENT=dict(endpoint = os.environ.get("HARBOR_HOST_SCHEMA", "https")+ "://"+harbor_server+"/api", username = admin_user, password =  admin_pwd)
 USER_ROLE=dict(admin=0,normal=1)
 TEARDOWN = os.environ.get('TEARDOWN', 'true').lower() in ('true', 'yes')
-notary_url = os.environ.get('NOTARY_URL', 'https://'+harbor_server+':4443')
 DOCKER_USER = os.environ.get('DOCKER_USER', '')
 DOCKER_PWD = os.environ.get('DOCKER_PWD', '')
 METRIC_URL = os.environ.get('METRIC_URL', 'http://'+harbor_server+':9090')
+SYSLOG_ENDPOINT = os.environ.get('SYSLOG_ENDPOINT', '')
+ES_ENDPOINT = os.environ.get('ES_ENDPOINT', '')
 BASE_IMAGE = dict(name='busybox', tag='latest')
 BASE_IMAGE_ABS_PATH_NAME = '/' + BASE_IMAGE['name'] + '.tar'
 
-def GetProductApi(username, password, harbor_server= os.environ.get("HARBOR_HOST", '')):
-
-    cfg = swagger_client.Configuration()
-    cfg.host = "https://"+harbor_server+"/api/v2.0"
-    cfg.username = username
-    cfg.password = password
-    cfg.verify_ssl = False
-    cfg.debug = True
-    api_client = swagger_client.ApiClient(cfg)
-    api_instance = swagger_client.ProductsApi(api_client)
-    return api_instance
 
 def GetRepositoryApi(username, password, harbor_server= os.environ.get("HARBOR_HOST", '')):
 

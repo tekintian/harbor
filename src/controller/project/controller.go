@@ -24,6 +24,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/allowlist"
 	"github.com/goharbor/harbor/src/pkg/notification"
 	"github.com/goharbor/harbor/src/pkg/project"
@@ -68,8 +69,8 @@ type Controller interface {
 // NewController creates an instance of the default project controller
 func NewController() Controller {
 	return &controller{
-		projectMgr:   project.Mgr,
-		metaMgr:      metadata.Mgr,
+		projectMgr:   pkg.ProjectMgr,
+		metaMgr:      pkg.ProjectMetaMgr,
 		allowlistMgr: allowlist.NewDefaultManager(),
 		userMgr:      user.Mgr,
 	}
@@ -104,7 +105,7 @@ func (c *controller) Create(ctx context.Context, project *models.Project) (int64
 		return nil
 	}
 
-	if err := orm.WithTransaction(h)(ctx); err != nil {
+	if err := orm.WithTransaction(h)(orm.SetTransactionOpNameToContext(ctx, "tx-create-project")); err != nil {
 		return 0, err
 	}
 
@@ -149,9 +150,9 @@ func (c *controller) Exists(ctx context.Context, projectIDOrName interface{}) (b
 		return true, nil
 	} else if errors.IsNotFoundErr(err) {
 		return false, nil
-	} else {
-		return false, err
 	}
+	// else
+	return false, err
 }
 
 func (c *controller) Get(ctx context.Context, projectIDOrName interface{}, options ...Option) (*models.Project, error) {
@@ -354,7 +355,7 @@ func (c *controller) loadOwners(ctx context.Context, projects models.Projects) e
 	for _, p := range projects {
 		owner, ok := m[p.OwnerID]
 		if !ok {
-			log.G(ctx).Warningf("the owner of project %s is not found, owner id is %d", p.Name, p.OwnerID)
+			log.G(ctx).Debugf("the owner of project %s is not found, owner id is %d", p.Name, p.OwnerID)
 			continue
 		}
 

@@ -16,12 +16,12 @@ package registry
 
 import (
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 
 	commonhttp "github.com/goharbor/harbor/src/common/http"
+	"github.com/goharbor/harbor/src/lib/config"
 )
 
 var proxy = newProxy()
@@ -34,7 +34,7 @@ func newProxy() http.Handler {
 	}
 	proxy := httputil.NewSingleHostReverseProxy(url)
 	if commonhttp.InternalTLSEnabled() {
-		proxy.Transport = commonhttp.GetHTTPTransport(commonhttp.SecureTransport)
+		proxy.Transport = commonhttp.GetHTTPTransport()
 	}
 
 	proxy.Director = basicAuthDirector(proxy.Director)

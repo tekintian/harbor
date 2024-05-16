@@ -18,13 +18,13 @@ import (
 	"errors"
 	"testing"
 
-	cjob "github.com/goharbor/harbor/src/common/job"
-	"github.com/goharbor/harbor/src/lib/q"
-
-	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/pkg/task/dao"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+
+	cjob "github.com/goharbor/harbor/src/common/job"
+	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg/task/dao"
 )
 
 type taskManagerTestSuite struct {
@@ -141,6 +141,19 @@ func (t *taskManagerTestSuite) TestList() {
 		},
 	}, nil)
 	tasks, err := t.mgr.List(nil, nil)
+	t.Require().Nil(err)
+	t.Require().Len(tasks, 1)
+	t.Equal(int64(1), tasks[0].ID)
+	t.dao.AssertExpectations(t.T())
+}
+
+func (t *taskManagerTestSuite) TestListScanTasksByReportUUID() {
+	t.dao.On("ListScanTasksByReportUUID", mock.Anything, mock.Anything).Return([]*dao.Task{
+		{
+			ID: 1,
+		},
+	}, nil)
+	tasks, err := t.mgr.ListScanTasksByReportUUID(nil, "uuid")
 	t.Require().Nil(err)
 	t.Require().Len(tasks, 1)
 	t.Equal(int64(1), tasks[0].ID)

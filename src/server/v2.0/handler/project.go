@@ -17,19 +17,18 @@ package handler
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/goharbor/harbor/src/pkg/member"
-
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/common/security/local"
+	robotSec "github.com/goharbor/harbor/src/common/security/robot"
 	"github.com/goharbor/harbor/src/controller/p2p/preheat"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/quota"
@@ -37,18 +36,22 @@ import (
 	"github.com/goharbor/harbor/src/controller/repository"
 	"github.com/goharbor/harbor/src/controller/retention"
 	"github.com/goharbor/harbor/src/controller/scanner"
-	"github.com/goharbor/harbor/src/core/api"
+	"github.com/goharbor/harbor/src/controller/user"
 	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/audit"
+	"github.com/goharbor/harbor/src/pkg/member"
 	"github.com/goharbor/harbor/src/pkg/project/metadata"
+	pkgModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 	"github.com/goharbor/harbor/src/pkg/retention/policy"
 	"github.com/goharbor/harbor/src/pkg/robot"
-	"github.com/goharbor/harbor/src/pkg/user"
+	userModels "github.com/goharbor/harbor/src/pkg/user/models"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/project"
@@ -60,8 +63,8 @@ const defaultDaysToRetentionForProxyCacheProject = 7
 func newProjectAPI() *projectAPI {
 	return &projectAPI{
 		auditMgr:      audit.Mgr,
-		metadataMgr:   metadata.Mgr,
-		userMgr:       user.Mgr,
+		metadataMgr:   pkg.ProjectMetaMgr,
+		userCtl:       user.Ctl,
 		repositoryCtl: repository.Ctl,
 		projectCtl:    project.Ctl,
 		memberMgr:     member.Mgr,
@@ -77,7 +80,7 @@ type projectAPI struct {
 	BaseAPI
 	auditMgr      audit.Manager
 	metadataMgr   metadata.Manager
-	userMgr       user.Manager
+	userCtl       user.Controller
 	repositoryCtl repository.Controller
 	projectCtl    project.Controller
 	memberMgr     member.Manager
@@ -99,6 +102,10 @@ func (a *projectAPI) CreateProject(ctx context.Context, params operation.CreateP
 	}
 
 	secCtx, _ := security.FromContext(ctx)
+	if r, ok := secCtx.(*robotSec.SecurityContext); ok && !r.User().IsSysLevel() {
+		log.Errorf("Only system level robot can create project")
+		return a.SendError(ctx, errors.ForbiddenError(nil).WithMessage("Only system level robot can create project"))
+	}
 	if onlyAdmin && !(a.isSysAdmin(ctx, rbac.ActionCreate) || secCtx.IsSolutionUser()) {
 		log.Errorf("Only sys admin can create project")
 		return a.SendError(ctx, errors.ForbiddenError(nil).WithMessage("Only system admin can create project"))
@@ -141,26 +148,51 @@ func (a *projectAPI) CreateProject(ctx context.Context, params operation.CreateP
 		req.Metadata.Public = strconv.FormatBool(false)
 	}
 
+	// validate metadata.public value, should only be "true" or "false"
+	if p := req.Metadata.Public; p != "" {
+		if p != "true" && p != "false" {
+			return a.SendError(ctx, errors.BadRequestError(nil).WithMessage(fmt.Sprintf("metadata.public should only be 'true' or 'false', but got: '%s'", p)))
+		}
+	}
+
 	// ignore enable_content_trust metadata for proxy cache project
 	// see https://github.com/goharbor/harbor/issues/12940 to get more info
 	if req.RegistryID != nil {
 		req.Metadata.EnableContentTrust = nil
 	}
 
-	// validate the RegistryID and StorageLimit in the body of the request
+	// validate the RetentionID, RegistryID and StorageLimit in the body of the request
 	if err := a.validateProjectReq(ctx, req); err != nil {
 		return a.SendError(ctx, err)
 	}
 
 	var ownerID int
+	// TODO: revise the ownerID in project model.
 	// set the owner as the system admin when the API being called by replication
 	// it's a solution to workaround the restriction of project creation API:
 	// only normal users can create projects
-	if secCtx.IsSolutionUser() {
-		ownerID = 1
+	// Remove the assumption of user id 1 is the system admin. And use the minimum system admin id as the owner ID,
+	// in most case, it's 1
+	if _, ok := secCtx.(*robotSec.SecurityContext); ok || secCtx.IsSolutionUser() {
+		q := &q.Query{
+			Keywords: map[string]interface{}{
+				"sysadmin_flag": true,
+			},
+			Sorts: []*q.Sort{
+				q.NewSort("user_id", false),
+			},
+		}
+		admins, err := a.userCtl.List(ctx, q, userModels.WithDefaultAdmin())
+		if err != nil {
+			return a.SendError(ctx, err)
+		}
+		if len(admins) == 0 {
+			return a.SendError(ctx, errors.New(nil).WithMessage("cannot create project as no system admin found"))
+		}
+		ownerID = admins[0].UserID
 	} else {
 		ownerName := secCtx.GetUsername()
-		user, err := a.userMgr.GetByName(ctx, ownerName)
+		user, err := a.userCtl.GetByName(ctx, ownerName)
 		if err != nil {
 			return a.SendError(ctx, err)
 		}
@@ -172,7 +204,10 @@ func (a *projectAPI) CreateProject(ctx context.Context, params operation.CreateP
 		OwnerID:    ownerID,
 		RegistryID: lib.Int64Value(req.RegistryID),
 	}
-	lib.JSONCopy(&p.Metadata, req.Metadata)
+	if err := lib.JSONCopy(&p.Metadata, req.Metadata); err != nil {
+		log.Warningf("failed to call JSONCopy on project metadata when CreateProject, error: %v", err)
+	}
+	delete(p.Metadata, "retention_id")
 
 	projectID, err := a.projectCtl.Create(ctx, p)
 	if err != nil {
@@ -335,8 +370,7 @@ func (a *projectAPI) GetProjectSummary(ctx context.Context, params operation.Get
 	}
 
 	summary := &models.ProjectSummary{
-		ChartCount: int64(p.ChartCount),
-		RepoCount:  p.RepoCount,
+		RepoCount: p.RepoCount,
 	}
 
 	var fetchSummaries []func(context.Context, *project.Project, *models.ProjectSummary)
@@ -415,6 +449,26 @@ func (a *projectAPI) ListProjects(ctx context.Context, params operation.ListProj
 				}
 
 				query.Keywords["member"] = member
+			} else if r, ok := secCtx.(*robotSec.SecurityContext); ok {
+				// for the system level robot that covers all the project, see it as the system admin.
+				var coverAll bool
+				var names []string
+				for _, p := range r.User().Permissions {
+					if p.IsCoverAll() {
+						coverAll = true
+						break
+					}
+					names = append(names, p.Namespace)
+				}
+				if !coverAll {
+					namesQuery := &pkgModels.NamesQuery{
+						Names: names,
+					}
+					if public, ok := query.Keywords["public"]; !ok || lib.ToBool(public) {
+						namesQuery.WithPublic = true
+					}
+					query.Keywords["names"] = namesQuery
+				}
 			} else {
 				// can't get the user info, force to return public projects
 				query.Keywords["public"] = true
@@ -449,10 +503,9 @@ func (a *projectAPI) ListProjects(ctx context.Context, params operation.ListProj
 		wg.Add(1)
 		go func(p *project.Project) {
 			defer wg.Done()
-			// due to the issue https://github.com/lib/pq/issues/81 of lib/pg or postgres,
-			// simultaneous queries in transaction may failed, so clone a ctx with new ormer here
+			// simultaneous queries in transaction will fail, so clone a ctx with new ormer here
 			if err := a.populateProperties(orm.Clone(ctx), p); err != nil {
-				log.G(ctx).Errorf("failed to populate propertites for project %s, error: %v", p.Name, err)
+				log.G(ctx).Errorf("failed to populate properties for project %s, error: %v", p.Name, err)
 			}
 		}(p)
 	}
@@ -499,7 +552,21 @@ func (a *projectAPI) UpdateProject(ctx context.Context, params operation.UpdateP
 	if params.Project.Metadata != nil && p.IsProxy() {
 		params.Project.Metadata.EnableContentTrust = nil
 	}
-	lib.JSONCopy(&p.Metadata, params.Project.Metadata)
+	if err := lib.JSONCopy(&p.Metadata, params.Project.Metadata); err != nil {
+		log.Warningf("failed to call JSONCopy on project metadata when UpdateProject, error: %v", err)
+	}
+
+	// validate retention_id
+	if ridParam, ok := p.Metadata["retention_id"]; ok {
+		md, err := a.metadataMgr.Get(ctx, p.ProjectID)
+		if err != nil {
+			return a.SendError(ctx, err)
+		}
+		if rid, ok := md["retention_id"]; !ok || rid != ridParam {
+			errMsg := "the retention_id in the request's payload when updating a project should be omitted, alternatively passing the one that has already been associated to this project"
+			return a.SendError(ctx, errors.BadRequestError(fmt.Errorf(errMsg)))
+		}
+	}
 
 	if err := a.projectCtl.Update(ctx, p); err != nil {
 		return a.SendError(ctx, err)
@@ -509,6 +576,10 @@ func (a *projectAPI) UpdateProject(ctx context.Context, params operation.UpdateP
 }
 
 func (a *projectAPI) GetScannerOfProject(ctx context.Context, params operation.GetScannerOfProjectParams) middleware.Responder {
+	if err := a.RequireAuthenticated(ctx); err != nil {
+		return a.SendError(ctx, err)
+	}
+
 	projectNameOrID := parseProjectNameOrID(params.ProjectNameOrID, params.XIsResourceName)
 	if err := a.RequireProjectAccess(ctx, projectNameOrID, rbac.ActionRead, rbac.ResourceScanner); err != nil {
 		return a.SendError(ctx, err)
@@ -519,15 +590,23 @@ func (a *projectAPI) GetScannerOfProject(ctx context.Context, params operation.G
 		return a.SendError(ctx, err)
 	}
 
-	scanner, err := a.scannerCtl.GetRegistrationByProject(ctx, p.ProjectID)
+	s, err := a.scannerCtl.GetRegistrationByProject(ctx, p.ProjectID)
 	if err != nil {
 		return a.SendError(ctx, err)
 	}
-
-	return operation.NewGetScannerOfProjectOK().WithPayload(model.NewScannerRegistration(scanner).ToSwagger(ctx))
+	if s != nil {
+		if err := a.scannerCtl.RetrieveCap(ctx, s); err != nil {
+			log.Warningf(scanner.RetrieveCapFailMsg, err)
+		}
+	}
+	return operation.NewGetScannerOfProjectOK().WithPayload(model.NewScannerRegistration(s).ToSwagger(ctx))
 }
 
 func (a *projectAPI) ListScannerCandidatesOfProject(ctx context.Context, params operation.ListScannerCandidatesOfProjectParams) middleware.Responder {
+	if err := a.RequireAuthenticated(ctx); err != nil {
+		return a.SendError(ctx, err)
+	}
+
 	projectNameOrID := parseProjectNameOrID(params.ProjectNameOrID, params.XIsResourceName)
 	if err := a.RequireProjectAccess(ctx, projectNameOrID, rbac.ActionCreate, rbac.ResourceScanner); err != nil {
 		return a.SendError(ctx, err)
@@ -560,6 +639,10 @@ func (a *projectAPI) ListScannerCandidatesOfProject(ctx context.Context, params 
 }
 
 func (a *projectAPI) SetScannerOfProject(ctx context.Context, params operation.SetScannerOfProjectParams) middleware.Responder {
+	if err := a.RequireAuthenticated(ctx); err != nil {
+		return a.SendError(ctx, err)
+	}
+
 	projectNameOrID := parseProjectNameOrID(params.ProjectNameOrID, params.XIsResourceName)
 	if err := a.RequireProjectAccess(ctx, projectNameOrID, rbac.ActionCreate, rbac.ResourceScanner); err != nil {
 		return a.SendError(ctx, err)
@@ -587,9 +670,6 @@ func (a *projectAPI) deletable(ctx context.Context, projectNameOrID interface{})
 	if p.RepoCount > 0 {
 		result.Deletable = false
 		result.Message = "the project contains repositories, can not be deleted"
-	} else if p.ChartCount > 0 {
-		result.Deletable = false
-		result.Message = "the project contains helm charts, can not be deleted"
 	}
 
 	return p, result, nil
@@ -609,6 +689,10 @@ func (a *projectAPI) getProject(ctx context.Context, projectNameOrID interface{}
 }
 
 func (a *projectAPI) validateProjectReq(ctx context.Context, req *models.ProjectReq) error {
+	if req.Metadata.RetentionID != nil && *req.Metadata.RetentionID != "" {
+		return errors.BadRequestError(fmt.Errorf("the retention_id in the request's payload when creating a project should be omitted, alternatively passing an empty string"))
+	}
+
 	if req.RegistryID != nil {
 		if *req.RegistryID <= 0 {
 			return errors.BadRequestError(fmt.Errorf("%d is invalid value of registry_id, it should be geater than 0", *req.RegistryID))
@@ -658,16 +742,6 @@ func (a *projectAPI) populateProperties(ctx context.Context, p *project.Project)
 	}
 	p.RepoCount = total
 
-	// Populate chart count property
-	if config.WithChartMuseum() {
-		count, err := api.GetChartController().GetCountOfCharts([]string{p.Name})
-		if err != nil {
-			err = errors.Wrap(err, fmt.Sprintf("get chart count of project %d failed", p.ProjectID))
-			return err
-		}
-
-		p.ChartCount = count
-	}
 	return nil
 }
 
@@ -680,7 +754,7 @@ func (a *projectAPI) isSysAdmin(ctx context.Context, action rbac.Action) bool {
 
 func getProjectQuotaSummary(ctx context.Context, p *project.Project, summary *models.ProjectSummary) {
 	if !config.QuotaPerProjectEnable(ctx) {
-		log.Debug("Quota per project disabled")
+		log.Debug("Quota per project deactivated")
 		return
 	}
 
@@ -692,10 +766,10 @@ func getProjectQuotaSummary(ctx context.Context, p *project.Project, summary *mo
 
 	summary.Quota = &models.ProjectSummaryQuota{}
 	if hard, err := q.GetHard(); err == nil {
-		summary.Quota.Hard = hard
+		summary.Quota.Hard = model.NewResourceList(hard).ToSwagger()
 	}
 	if used, err := q.GetUsed(); err == nil {
-		summary.Quota.Used = used
+		summary.Quota.Used = model.NewResourceList(used).ToSwagger()
 	}
 }
 
@@ -738,7 +812,9 @@ func getProjectRegistrySummary(ctx context.Context, p *project.Project, summary 
 		log.Warningf("failed to get registry %d: %v", p.RegistryID, err)
 	} else if registry != nil {
 		registry.Credential = nil
-		lib.JSONCopy(&summary.Registry, registry)
+		if err := lib.JSONCopy(&summary.Registry, registry); err != nil {
+			log.Warningf("failed to call JSONCopy on project registry summary, error: %v", err)
+		}
 	}
 }
 

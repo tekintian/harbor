@@ -18,19 +18,20 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
-	"github.com/aws/aws-sdk-go/aws/session"
-	awsecrapi "github.com/aws/aws-sdk-go/service/ecr"
-	commonhttp "github.com/goharbor/harbor/src/common/http"
-	"github.com/goharbor/harbor/src/common/http/modifier"
-	"github.com/goharbor/harbor/src/lib/log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	awsecrapi "github.com/aws/aws-sdk-go/service/ecr"
+
+	commonhttp "github.com/goharbor/harbor/src/common/http"
+	"github.com/goharbor/harbor/src/common/http/modifier"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 // Credential ...
@@ -61,7 +62,7 @@ func (a *awsAuthCredential) Modify(req *http.Request) error {
 		return nil
 	}
 	if !a.isTokenValid() {
-		endpoint, user, pass, expiresAt, err := a.getAuthorization()
+		endpoint, user, pass, expiresAt, err := a.getAuthorization(req.URL.String())
 
 		if err != nil {
 			return err
@@ -100,20 +101,13 @@ func getAwsSvc(region, accessKey, accessSecret string, insecure bool, forceEndpo
 			accessKey,
 			accessSecret,
 			"")
-	} else {
-		cred = ec2rolecreds.NewCredentials(sess)
 	}
-	var tr *http.Transport
-	if insecure {
-		tr = commonhttp.GetHTTPTransport(commonhttp.InsecureTransport)
-	} else {
-		tr = commonhttp.GetHTTPTransport(commonhttp.SecureTransport)
-	}
+
 	config := &aws.Config{
 		Credentials: cred,
 		Region:      &region,
 		HTTPClient: &http.Client{
-			Transport: tr,
+			Transport: commonhttp.GetHTTPTransport(commonhttp.WithInsecure(insecure)),
 		},
 	}
 	if forceEndpoint != nil {
@@ -124,9 +118,18 @@ func getAwsSvc(region, accessKey, accessSecret string, insecure bool, forceEndpo
 	return svc, nil
 }
 
-func (a *awsAuthCredential) getAuthorization() (string, string, string, *time.Time, error) {
+func (a *awsAuthCredential) getAuthorization(url string) (string, string, string, *time.Time, error) {
+	id, _, err := parseAccountRegion(url)
+	if err != nil {
+		return "", "", "", nil, err
+	}
+
+	var input *awsecrapi.GetAuthorizationTokenInput
+	if id != "" {
+		input = &awsecrapi.GetAuthorizationTokenInput{RegistryIds: []*string{&id}}
+	}
 	svc := a.awssvc
-	result, err := svc.GetAuthorizationToken(nil)
+	result, err := svc.GetAuthorizationToken(input)
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			return "", "", "", nil, fmt.Errorf("%s: %s", aerr.Code(), aerr.Error())

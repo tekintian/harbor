@@ -1,14 +1,27 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package metric
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/lib/config"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/metric"
 )
 
@@ -26,6 +39,8 @@ const (
 	BlobsOperationID = "v2_blob"
 	// BlobsUploadOperationID ...
 	BlobsUploadOperationID = "v2_blob_upload"
+	// ReferrersOperationID ...
+	ReferrersOperationID = "v2_referrers"
 	// OthersOperationID ...
 	OthersOperationID = "v2_others"
 )
@@ -38,10 +53,6 @@ func SetMetricOpID(ctx context.Context, value string) {
 	}
 }
 
-func isChartMuseumURL(url string) bool {
-	return strings.HasPrefix(url, "/chartrepo/") || strings.HasPrefix(url, "/api/chartrepo/")
-}
-
 func instrumentHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		metric.TotalInFlightGauge.Inc()
@@ -50,12 +61,8 @@ func instrumentHandler(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), contextOpIDKey{}, &op)
 		next.ServeHTTP(rc, r.WithContext(ctx))
 		if len(op) == 0 {
-			if isChartMuseumURL(r.URL.Path) {
-				op = "chartmuseum"
-			} else {
-				// From swagger's perspective the operation of this legacy URL is unknown
-				op = "unknown"
-			}
+			// From swagger's perspective the operation of this legacy URL is unknown
+			op = "unknown"
 		}
 		metric.TotalReqDurSummary.WithLabelValues(r.Method, op).Observe(time.Since(now).Seconds())
 		metric.TotalReqCnt.WithLabelValues(r.Method, strconv.Itoa(rc.StatusCode), op).Inc()

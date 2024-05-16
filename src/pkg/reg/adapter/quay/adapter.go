@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strings"
 
@@ -31,7 +30,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
 	qauth "github.com/goharbor/harbor/src/pkg/reg/adapter/quay/auth"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/goharbor/harbor/src/pkg/reg/util"
 )
 
 var (
@@ -87,7 +85,7 @@ func newAdapter(registry *model.Registry) (*adapter, error) {
 		registry:     registry,
 		client: common_http.NewClient(
 			&http.Client{
-				Transport: util.GetHTTPTransport(registry.Insecure),
+				Transport: common_http.GetHTTPTransport(common_http.WithInsecure(registry.Insecure)),
 			},
 			modifiers...,
 		),
@@ -215,7 +213,7 @@ func (a *adapter) createNamespace(namespace *model.Namespace) error {
 		return nil
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -236,7 +234,7 @@ func (a *adapter) getNamespace(namespace string) (*model.Namespace, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -275,12 +273,12 @@ func (a *adapter) PullBlob(repository, digest string) (size int64, blob io.ReadC
 		if size == 0 {
 			var data []byte
 			defer blob.Close()
-			data, err = ioutil.ReadAll(blob)
+			data, err = io.ReadAll(blob)
 			if err != nil {
 				return
 			}
 			size = int64(len(data))
-			blob = ioutil.NopCloser(bytes.NewReader(data))
+			blob = io.NopCloser(bytes.NewReader(data))
 			return size, blob, nil
 		}
 	}

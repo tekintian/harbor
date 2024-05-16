@@ -15,11 +15,15 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"time"
 
 	"github.com/gocraft/work"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"github.com/goharbor/harbor/src/jobservice/env"
 	"github.com/goharbor/harbor/src/jobservice/errs"
 	"github.com/goharbor/harbor/src/jobservice/job"
@@ -28,10 +32,12 @@ import (
 	"github.com/goharbor/harbor/src/jobservice/period"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/metric"
+	tracelib "github.com/goharbor/harbor/src/lib/trace"
 )
 
 const (
 	maxTrackRetries = 6
+	tracerName      = "goharbor/harbor/src/jobservice/runner/redis"
 )
 
 // RedisJob is a job wrapper to wrap the job.Interface to the style which can be recognized by the redis worker.
@@ -52,6 +58,9 @@ func NewRedisJob(job interface{}, ctx *env.Context, ctl lcm.Controller) *RedisJo
 
 // Run the job
 func (rj *RedisJob) Run(j *work.Job) (err error) {
+	_, span := tracelib.StartTrace(context.Background(), tracerName, "run-job")
+	defer span.End()
+
 	var (
 		runningJob  job.Interface
 		execContext job.Context
@@ -65,9 +74,10 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 	// Check if the job is a periodic one as periodic job has its own ID format
 	if eID, yes := isPeriodicJobExecution(j); yes {
 		jID = eID
-
+		span.SetAttributes(attribute.Key("periodicJob").Bool(true))
 		logger.Infof("Start to run periodical job execution: %s", eID)
 	}
+	span.SetAttributes(attribute.Key("jobID").String(jID), attribute.Key("jobName").String(j.Name))
 
 	// As the job stats may not be ready when job executing sometimes (corner case),
 	// the track call here may get NOT_FOUND error. For that case, let's do retry to recovery.
@@ -76,7 +86,6 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 		if err == nil {
 			break
 		}
-
 		if errs.IsObjectNotFoundError(err) {
 			if retried < maxTrackRetries {
 				// Still have chance to re-track the given job.
@@ -84,17 +93,18 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 				b := backoff(retried)
 				logger.Errorf("Track job %s: stats may not have been ready yet, hold for %d ms and retry again", jID, b)
 				<-time.After(time.Duration(b) * time.Millisecond)
+				span.AddEvent("retrying to get job stat")
 				continue
-			} else {
-				// Exit and never try.
-				// Directly return without retry again as we have no way to restore the stats again.
-				j.Fails = 10000000000 // never retry
 			}
+			// else
+			// Exit and never try.
+			// Directly return without retry again as we have no way to restore the stats again.
+			j.Fails = 10000000000 // never retry
 		}
 
 		// Log error and exit
 		logger.Errorf("Job '%s:%s' exit with error: failed to get job tracker: %s", j.Name, j.ID, err)
-
+		tracelib.RecordError(span, err, "failed to get job tracker")
 		// ELSE:
 		// As tracker creation failed, there is no way to mark the job status change.
 		// Also a non nil error return consumes a fail. If all retries are failed here,
@@ -113,8 +123,10 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 			logger.Errorf("Job '%s:%s' exit with error: %s", j.Name, j.ID, err)
 			metric.JobserviceTotalTask.WithLabelValues(j.Name, "fail").Inc()
 			metric.JobservieTaskProcessTimeSummary.WithLabelValues(j.Name, "fail").Observe(time.Since(now).Seconds())
+			tracelib.RecordError(span, err, "job failed with err")
 			if er := tracker.Fail(); er != nil {
 				logger.Errorf("Error occurred when marking the status of job %s:%s to failure: %s", j.Name, j.ID, er)
+				span.RecordError(err)
 			}
 
 			return
@@ -129,6 +141,7 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 				// Logged
 				metric.JobserviceTotalTask.WithLabelValues(j.Name, "stop").Inc()
 				metric.JobservieTaskProcessTimeSummary.WithLabelValues(j.Name, "stop").Observe(time.Since(now).Seconds())
+				tracelib.RecordError(span, err, "job stopped")
 				logger.Infof("Job %s:%s is stopped", j.Name, j.ID)
 				return
 			}
@@ -137,7 +150,9 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 		metric.JobservieTaskProcessTimeSummary.WithLabelValues(j.Name, "success").Observe(time.Since(now).Seconds())
 		// Mark job status to success.
 		logger.Infof("Job '%s:%s' exit with success", j.Name, j.ID)
+		span.SetStatus(codes.Ok, "job exit with success")
 		if er := tracker.Succeed(); er != nil {
+			tracelib.RecordError(span, err, "failed to mark job success")
 			logger.Errorf("Error occurred when marking the status of job %s:%s to success: %s", j.Name, j.ID, er)
 		}
 	}()
@@ -146,7 +161,7 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Log the stack
-			buf := make([]byte, 1<<10)
+			buf := make([]byte, 1<<20)
 			size := runtime.Stack(buf, false)
 			err = errors.Errorf("runtime error: %s; stack: %s", r, buf[0:size])
 			logger.Errorf("Run job %s:%s error: %s", j.Name, j.ID, err)
@@ -169,6 +184,7 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 		// Reset job info.
 		if err = tracker.Reset(); err != nil {
 			// Log error and return the original error if existing
+			tracelib.RecordError(span, err, "reset job failed")
 			err = errors.Wrap(err, fmt.Sprintf("retrying %s job %s:%s failed", jStatus.String(), j.Name, j.ID))
 
 			if len(j.LastErr) > 0 {
@@ -179,12 +195,13 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 		}
 
 		logger.Infof("Retrying job %s:%s, revision: %d", j.Name, j.ID, tracker.Job().Info.Revision)
-		break
 	case job.SuccessStatus:
 		// do nothing
 		return nil
 	default:
-		return errors.Errorf("mismatch status for running job: expected %s/%s but got %s", job.PendingStatus, job.ScheduledStatus, jStatus.String())
+		err = errors.Errorf("mismatch status for running job: expected %s/%s but got %s", job.PendingStatus, job.ScheduledStatus, jStatus.String())
+		tracelib.RecordError(span, err, "status mismatch")
+		return err
 	}
 
 	// Build job context
@@ -197,6 +214,7 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 		// Close open io stream first
 		if closer, ok := execContext.GetLogger().(logger.Closer); ok {
 			if er := closer.Close(); er != nil {
+				tracelib.RecordError(span, er, "close job logger failed")
 				logger.Errorf("Close job logger failed: %s", er)
 			}
 		}
@@ -206,6 +224,7 @@ func (rj *RedisJob) Run(j *work.Job) (err error) {
 	runningJob = Wrap(rj.job)
 	// Set status to run
 	if err = tracker.Run(); err != nil {
+		tracelib.RecordError(span, err, "failed set status to run")
 		return
 	}
 	// Run the job

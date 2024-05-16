@@ -1,23 +1,36 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package aliacr
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/cr"
-	"github.com/docker/distribution/registry/client/auth/challenge"
+
 	commonhttp "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
+	"github.com/goharbor/harbor/src/pkg/reg/filter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/pkg/reg/util"
 	"github.com/goharbor/harbor/src/pkg/registry/auth/bearer"
@@ -34,7 +47,9 @@ func init() {
 // example:
 // https://registry.%s.aliyuncs.com
 // https://cr.%s.aliyuncs.com
-var regRegion = regexp.MustCompile("https://(registry|cr)\\.([\\w\\-]+)\\.aliyuncs\\.com")
+// https://registry-vpc.%s.aliyuncs.com
+// https://registry-internal.%s.aliyuncs.com
+var regRegion = regexp.MustCompile(`https://(registry|cr|registry-vpc|registry-internal)\.([\w\-]+)\.aliyuncs\.com`)
 
 func getRegion(url string) (region string, err error) {
 	if url == "" {
@@ -42,7 +57,7 @@ func getRegion(url string) (region string, err error) {
 	}
 	rs := regRegion.FindStringSubmatch(url)
 	if rs == nil {
-		return "", errors.New("Invalid Rgistry|CR service url")
+		return "", errors.New("invalid Rgistry|CR service url")
 	}
 	// fmt.Println(rs)
 	return rs[2], nil
@@ -53,42 +68,27 @@ func newAdapter(registry *model.Registry) (*adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	// fix url (allow user input cr service url)
-	registry.URL = fmt.Sprintf(registryEndpointTpl, region)
-	realm, service, err := ping(registry)
+	switch true {
+	case strings.Contains(registry.URL, "registry-vpc"):
+		registry.URL = fmt.Sprintf(registryVPCEndpointTpl, region)
+	case strings.Contains(registry.URL, "registry-internal"):
+		registry.URL = fmt.Sprintf(registryInternalEndpointTpl, region)
+	default:
+		// fix url (allow user input cr service url)
+		registry.URL = fmt.Sprintf(registryEndpointTpl, region)
+	}
+	realm, service, err := util.Ping(registry)
 	if err != nil {
 		return nil, err
 	}
 	credential := NewAuth(region, registry.Credential.AccessKey, registry.Credential.AccessSecret)
-	authorizer := bearer.NewAuthorizer(realm, service, credential, util.GetHTTPTransport(registry.Insecure))
+	authorizer := bearer.NewAuthorizer(realm, service, credential, commonhttp.GetHTTPTransport(commonhttp.WithInsecure(registry.Insecure)))
 	return &adapter{
 		region:   region,
 		registry: registry,
 		domain:   fmt.Sprintf(endpointTpl, region),
 		Adapter:  native.NewAdapterWithAuthorizer(registry, authorizer),
 	}, nil
-}
-
-func ping(registry *model.Registry) (string, string, error) {
-	client := &http.Client{}
-	if registry.Insecure {
-		client.Transport = commonhttp.GetHTTPTransport(commonhttp.InsecureTransport)
-	} else {
-		client.Transport = commonhttp.GetHTTPTransport(commonhttp.SecureTransport)
-	}
-
-	resp, err := client.Get(registry.URL + "/v2/")
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	challenges := challenge.ResponseChallenges(resp)
-	for _, challenge := range challenges {
-		if challenge.Scheme == "bearer" {
-			return challenge.Parameters["realm"], challenge.Parameters["service"], nil
-		}
-	}
-	return "", "", fmt.Errorf("bearer auth scheme isn't supported: %v", challenges)
 }
 
 type factory struct {
@@ -176,6 +176,14 @@ func getAdapterInfo() *model.AdapterPattern {
 			Key:   e,
 			Value: fmt.Sprintf("https://registry.%s.aliyuncs.com", e),
 		})
+		endpoints = append(endpoints, &model.Endpoint{
+			Key:   e + "-vpc",
+			Value: fmt.Sprintf("https://registry-vpc.%s.aliyuncs.com", e),
+		})
+		endpoints = append(endpoints, &model.Endpoint{
+			Key:   e + "-internal",
+			Value: fmt.Sprintf("https://registry-internal.%s.aliyuncs.com", e),
+		})
 	}
 	info := &model.AdapterPattern{
 		EndpointPattern: &model.EndpointPattern{
@@ -189,7 +197,7 @@ func getAdapterInfo() *model.AdapterPattern {
 func (a *adapter) listNamespaces(c *cr.Client) (namespaces []string, err error) {
 	// list namespaces
 	var nsReq = cr.CreateGetNamespaceListRequest()
-	var nsResp = cr.CreateGetNamespaceListResponse()
+	var nsResp *cr.GetNamespaceListResponse
 	nsReq.SetDomain(a.domain)
 	nsResp, err = c.GetNamespaceList(nsReq)
 	if err != nil {
@@ -236,12 +244,9 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) (resources []*model.Re
 	// get filter pattern
 	var repoPattern string
 	var tagsPattern string
-	for _, filter := range filters {
-		if filter.Type == model.FilterTypeName {
-			repoPattern = filter.Value.(string)
-		}
-		if filter.Type == model.FilterTypeTag {
-			tagsPattern = filter.Value.(string)
+	for _, f := range filters {
+		if f.Type == model.FilterTypeName {
+			repoPattern = f.Value.(string)
 		}
 	}
 	var namespacePattern = strings.Split(repoPattern, "/")[0]
@@ -292,26 +297,21 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) (resources []*model.Re
 			var tags []string
 			tags, err = a.getTags(repo, client)
 			if err != nil {
-				return fmt.Errorf("List tags for repo '%s' error: %v", repo.RepoName, err)
+				return fmt.Errorf("list tags for repo '%s' error: %v", repo.RepoName, err)
 			}
 
-			var filterTags []string
-			if tagsPattern != "" {
-				for _, tag := range tags {
-					var ok bool
-					ok, err = util.Match(tagsPattern, tag)
-					if err != nil {
-						return fmt.Errorf("Match tag '%s' error: %v", tag, err)
-					}
-					if ok {
-						filterTags = append(filterTags, tag)
-					}
-				}
-			} else {
-				filterTags = tags
+			var artifacts []*model.Artifact
+			for _, tag := range tags {
+				artifacts = append(artifacts, &model.Artifact{
+					Tags: []string{tag},
+				})
+			}
+			filterArtifacts, err := filter.DoFilterArtifacts(artifacts, filters)
+			if err != nil {
+				return err
 			}
 
-			if len(filterTags) > 0 {
+			if len(filterArtifacts) > 0 {
 				rawResources[index] = &model.Resource{
 					Type:     model.ResourceTypeImage,
 					Registry: a.registry,
@@ -319,7 +319,7 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) (resources []*model.Re
 						Repository: &model.Repository{
 							Name: filepath.Join(repo.RepoNamespace, repo.RepoName),
 						},
-						Vtags: filterTags,
+						Artifacts: filterArtifacts,
 					},
 				}
 			}
@@ -339,7 +339,7 @@ func (a *adapter) FetchArtifacts(filters []*model.Filter) (resources []*model.Re
 	return
 }
 
-func (a *adapter) listReposByNamespace(region string, namespace string, c *cr.Client) (repos []aliRepo, err error) {
+func (a *adapter) listReposByNamespace(_ string, namespace string, c *cr.Client) (repos []aliRepo, err error) {
 	var reposReq = cr.CreateGetRepoListByNamespaceRequest()
 	var reposResp = cr.CreateGetRepoListByNamespaceResponse()
 	reposReq.SetDomain(a.domain)
@@ -382,7 +382,10 @@ func (a *adapter) getTags(repo aliRepo, c *cr.Client) (tags []string, err error)
 		}
 
 		var resp = &aliTagResp{}
-		json.Unmarshal(tagsResp.GetHttpContentBytes(), resp)
+		err = json.Unmarshal(tagsResp.GetHttpContentBytes(), resp)
+		if err != nil {
+			return
+		}
 		for _, tag := range resp.Data.Tags {
 			tags = append(tags, tag.Tag)
 		}

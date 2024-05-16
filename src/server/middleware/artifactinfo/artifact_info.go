@@ -16,16 +16,18 @@ package artifactinfo
 
 import (
 	"fmt"
-	lib_http "github.com/goharbor/harbor/src/lib/http"
 	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 
+	"github.com/docker/distribution/reference"
+	"github.com/opencontainers/go-digest"
+
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
+	lib_http "github.com/goharbor/harbor/src/lib/http"
 	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/opencontainers/go-digest"
 )
 
 const (
@@ -42,6 +44,7 @@ var (
 		"tag_list":    lib.V2TagListURLRe,
 		"blob_upload": lib.V2BlobUploadURLRe,
 		"blob":        lib.V2BlobURLRe,
+		"referrers":   lib.V2ReferrersURLRe,
 	}
 )
 
@@ -50,7 +53,11 @@ func Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 			log.Debugf("In artifact info middleware, url: %s", req.URL.String())
-			m, ok := parse(req.URL)
+			m, ok, err := parse(req.URL)
+			if err != nil {
+				lib_http.SendError(rw, err)
+				return
+			}
 			if !ok {
 				next.ServeHTTP(rw, req)
 				return
@@ -100,7 +107,7 @@ func projectNameFromRepo(repo string) (string, error) {
 	return components[0], nil
 }
 
-func parse(url *url.URL) (map[string]string, bool) {
+func parse(url *url.URL) (map[string]string, bool, error) {
 	path := url.Path
 	query := url.Query()
 	m := make(map[string]string)
@@ -119,10 +126,15 @@ func parse(url *url.URL) (map[string]string, bool) {
 			break
 		}
 	}
-	if digest.DigestRegexp.MatchString(m[lib.ReferenceSubexp]) {
-		m[lib.DigestSubexp] = m[lib.ReferenceSubexp]
-	} else if ref, ok := m[lib.ReferenceSubexp]; ok {
-		m[tag] = ref
+	// parse reference, for invalid reference format, just give 404.
+	if m[lib.ReferenceSubexp] != "" {
+		if digest.DigestRegexp.MatchString(m[lib.ReferenceSubexp]) {
+			m[lib.DigestSubexp] = m[lib.ReferenceSubexp]
+		} else if reference.TagRegexp.MatchString(m[lib.ReferenceSubexp]) {
+			m[tag] = m[lib.ReferenceSubexp]
+		} else {
+			return m, match, errors.New("invalid reference format").WithCode(errors.NotFoundCode)
+		}
 	}
-	return m, match
+	return m, match, nil
 }

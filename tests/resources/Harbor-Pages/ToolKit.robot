@@ -24,7 +24,6 @@ Delete Success
     FOR  ${obj}  IN  @{obj}
         Retry Wait Until Page Contains Element  //*[@id='contentAll']//div[contains(.,'${obj}')]/../div/clr-icon[@shape='success-standard']
     END
-    Sleep  1
 
 Delete Fail
     [Arguments]  @{obj}
@@ -44,21 +43,20 @@ Filter Object
     Sleep  3
 
 Filter Project
-#Filter project repo user tag.
     [Arguments]    ${kw}
-    Retry Element Click  ${log_xpath}
+    Retry Element Click  ${logs_xpath}
     Retry Element Click  ${projects_xpath}
     Filter Object  ${kw}
 
 Select Object
 #select single element such as user project repo tag
     [Arguments]    ${obj}
-    Retry Element Click  xpath=//clr-dg-row[contains(.,'${obj}')]//label
+    Retry Element Click  xpath=//clr-dg-row[contains(.,'${obj}')]//label[contains(@class,'clr-control-label')]
 
 Multi-delete Object
     [Arguments]    ${delete_btn}  @{obj}
     FOR  ${obj}  IN  @{obj}
-        ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label
+        ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label[contains(@class,'clr-control-label')]
         Retry Element Click  ${element}
     END
     Sleep  1
@@ -70,9 +68,9 @@ Multi-delete Object
 
 # This func cannot support as the delete user flow changed.
 Multi-delete Artifact
-    [Arguments]    ${delete_btn}  @{obj}
+    [Arguments]  @{obj}
     FOR  ${obj}  IN  @{obj}
-        ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label
+        ${element}=  Set Variable  xpath=//clr-dg-row[contains(.,'${obj}')]//label[contains(@class,'clr-control-label')]
         Retry Element Click  ${element}
     END
     Sleep  1
@@ -87,7 +85,7 @@ Multi-delete Artifact
 Multi-delete User
     [Arguments]    @{obj}
     FOR  ${obj}  IN  @{obj}
-        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
+        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label[contains(@class,'clr-control-label')]
     END
     Retry Element Click  ${member_action_xpath}
     Retry Element Click  //*[@id='deleteUser']
@@ -97,7 +95,7 @@ Multi-delete User
 Multi-delete Member
     [Arguments]    @{obj}
     FOR  ${obj}  IN  @{obj}
-        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//clr-checkbox-wrapper/label
+        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//div[contains(@class,'clr-checkbox-wrapper')]/label[contains(@class,'clr-control-label')]
     END
     Retry Double Keywords When Error  Retry Element Click  ${member_action_xpath}  Retry Wait Until Page Contains Element  ${delete_action_xpath}
     Retry Double Keywords When Error  Retry Element Click  ${delete_action_xpath}  Retry Wait Until Page Contains Element  ${delete_btn}
@@ -107,10 +105,10 @@ Multi-delete Member
 Multi-delete Object Without Confirmation
     [Arguments]    @{obj}
     FOR  ${obj}  IN  @{obj}
-        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label
+        Retry Element Click  //clr-dg-row[contains(.,'${obj}')]//label[contains(@class,'clr-control-label')]
     END
     Retry Double Keywords When Error  Retry Element Click  ${delete_btn_2}  Retry Wait Until Page Not Contains Element  ${delete_btn_2}
 
 
 Select All On Current Page Object
-    Retry Element Click  //div[@class='datagrid-head']//label
+    Retry Element Click  //div[@class='datagrid-head']//label[contains(@class,'clr-control-label')]

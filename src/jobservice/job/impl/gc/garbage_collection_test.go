@@ -15,17 +15,20 @@
 package gc
 
 import (
-	"os"
 	"testing"
 
 	"github.com/docker/distribution/manifest/schema2"
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/stretchr/testify/suite"
+
 	commom_regctl "github.com/goharbor/harbor/src/common/registryctl"
+	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/jobservice/job"
-	"github.com/goharbor/harbor/src/pkg/artifact"
+	"github.com/goharbor/harbor/src/jobservice/tests"
+	pkgart "github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/artifactrash/model"
 	pkg_blob "github.com/goharbor/harbor/src/pkg/blob/models"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	htesting "github.com/goharbor/harbor/src/testing"
 	artifacttesting "github.com/goharbor/harbor/src/testing/controller/artifact"
 	projecttesting "github.com/goharbor/harbor/src/testing/controller/project"
@@ -34,7 +37,6 @@ import (
 	trashtesting "github.com/goharbor/harbor/src/testing/pkg/artifactrash"
 	"github.com/goharbor/harbor/src/testing/pkg/blob"
 	"github.com/goharbor/harbor/src/testing/registryctl"
-	"github.com/stretchr/testify/suite"
 )
 
 type gcTestSuite struct {
@@ -89,8 +91,10 @@ func (suite *gcTestSuite) TestDeletedArt() {
 
 	suite.artifactCtl.On("List").Return([]*artifact.Artifact{
 		{
-			ID:           1,
-			RepositoryID: 1,
+			Artifact: pkgart.Artifact{
+				ID:           1,
+				RepositoryID: 1,
+			},
 		},
 	}, nil)
 	suite.artifactCtl.On("Delete").Return(nil)
@@ -116,8 +120,9 @@ func (suite *gcTestSuite) TestRemoveUntaggedBlobs() {
 	ctx := &mockjobservice.MockJobContext{}
 	logger := &mockjobservice.MockJobLogger{}
 	ctx.On("GetLogger").Return(logger)
+	ctx.On("OPCommand").Return(job.NilCommand, false)
 
-	mock.OnAnything(suite.projectCtl, "List").Return([]*models.Project{
+	mock.OnAnything(suite.projectCtl, "List").Return([]*proModels.Project{
 		{
 			ProjectID: 1234,
 			Name:      "test GC",
@@ -139,7 +144,7 @@ func (suite *gcTestSuite) TestRemoveUntaggedBlobs() {
 	}
 
 	suite.NotPanics(func() {
-		gc.removeUntaggedBlobs(ctx)
+		gc.markOrSweepUntaggedBlobs(ctx)
 	})
 }
 
@@ -148,7 +153,6 @@ func (suite *gcTestSuite) TestInit() {
 	logger := &mockjobservice.MockJobLogger{}
 	mock.OnAnything(ctx, "Get").Return("core url", true)
 	ctx.On("GetLogger").Return(logger)
-	ctx.On("OPCommand").Return(job.NilCommand, true)
 
 	gc := &GarbageCollector{
 		registryCtlClient: suite.registryCtlClient,
@@ -157,9 +161,11 @@ func (suite *gcTestSuite) TestInit() {
 		"delete_untagged": true,
 		"redis_url_reg":   "redis url",
 		"time_window":     1,
+		"workers":         float64(3),
 	}
 	suite.Nil(gc.init(ctx, params))
 	suite.True(gc.deleteUntagged)
+	suite.Equal(3, gc.workers)
 
 	params = map[string]interface{}{
 		"delete_untagged": "unsupported",
@@ -189,25 +195,22 @@ func (suite *gcTestSuite) TestStop() {
 	ctx.On("GetLogger").Return(logger)
 	ctx.On("OPCommand").Return(job.StopCommand, true)
 
+	mock.OnAnything(suite.artifactCtl, "List").Return([]*artifact.Artifact{
+		{
+			Artifact: pkgart.Artifact{
+				ID:           1,
+				RepositoryID: 1,
+			},
+		},
+	}, nil)
+
 	gc := &GarbageCollector{
 		registryCtlClient: suite.registryCtlClient,
+		artCtl:            suite.artifactCtl,
+		deleteUntagged:    true,
 	}
-	params := map[string]interface{}{
-		"delete_untagged": true,
-		"redis_url_reg":   "redis url",
-	}
-	suite.Nil(gc.init(ctx, params))
 
-	ctx = &mockjobservice.MockJobContext{}
-	mock.OnAnything(ctx, "Get").Return("core url", true)
-	ctx.On("OPCommand").Return(job.StopCommand, false)
-	suite.Nil(gc.init(ctx, params))
-
-	ctx = &mockjobservice.MockJobContext{}
-	mock.OnAnything(ctx, "Get").Return("core url", true)
-	ctx.On("OPCommand").Return(job.NilCommand, true)
-	suite.Nil(gc.init(ctx, params))
-
+	suite.Equal(errGcStop, gc.mark(ctx))
 }
 
 func (suite *gcTestSuite) TestRun() {
@@ -216,17 +219,20 @@ func (suite *gcTestSuite) TestRun() {
 	ctx.On("GetLogger").Return(logger)
 	ctx.On("OPCommand").Return(job.NilCommand, true)
 	mock.OnAnything(ctx, "Get").Return("core url", true)
+	mock.OnAnything(ctx, "Checkin").Return(nil)
 
 	suite.artifactCtl.On("List").Return([]*artifact.Artifact{
 		{
-			ID:           1,
-			RepositoryID: 1,
+			Artifact: pkgart.Artifact{
+				ID:           1,
+				RepositoryID: 1,
+			},
 		},
 	}, nil)
 	suite.artifactCtl.On("Delete").Return(nil)
 	suite.artrashMgr.On("Filter").Return([]model.ArtifactTrash{}, nil)
 
-	mock.OnAnything(suite.projectCtl, "List").Return([]*models.Project{
+	mock.OnAnything(suite.projectCtl, "List").Return([]*proModels.Project{
 		{
 			ProjectID: 12345,
 			Name:      "test GC",
@@ -273,9 +279,9 @@ func (suite *gcTestSuite) TestRun() {
 	}
 	params := map[string]interface{}{
 		"delete_untagged": false,
-		// ToDo add a redis testing pkg, we do have a 'localhost' redis server in UT
-		"redis_url_reg": "redis://localhost:6379",
-		"time_window":   1,
+		"redis_url_reg":   tests.GetRedisURL(),
+		"time_window":     1,
+		"workers":         3,
 	}
 
 	suite.Nil(gc.Run(ctx, params))
@@ -285,11 +291,14 @@ func (suite *gcTestSuite) TestMark() {
 	ctx := &mockjobservice.MockJobContext{}
 	logger := &mockjobservice.MockJobLogger{}
 	ctx.On("GetLogger").Return(logger)
+	ctx.On("OPCommand").Return(job.NilCommand, false)
 
 	suite.artifactCtl.On("List").Return([]*artifact.Artifact{
 		{
-			ID:           1,
-			RepositoryID: 1,
+			Artifact: pkgart.Artifact{
+				ID:           1,
+				RepositoryID: 1,
+			},
 		},
 	}, nil)
 	suite.artifactCtl.On("Delete").Return(nil)
@@ -301,7 +310,7 @@ func (suite *gcTestSuite) TestMark() {
 		},
 	}, nil)
 
-	mock.OnAnything(suite.projectCtl, "List").Return([]*models.Project{
+	mock.OnAnything(suite.projectCtl, "List").Return([]*proModels.Project{
 		{
 			ProjectID: 1234,
 			Name:      "test GC",
@@ -351,6 +360,8 @@ func (suite *gcTestSuite) TestSweep() {
 	ctx := &mockjobservice.MockJobContext{}
 	logger := &mockjobservice.MockJobLogger{}
 	ctx.On("GetLogger").Return(logger)
+	ctx.On("OPCommand").Return(job.NilCommand, false)
+	mock.OnAnything(ctx, "Checkin").Return(nil)
 
 	mock.OnAnything(suite.blobMgr, "UpdateBlobStatus").Return(int64(1), nil)
 	mock.OnAnything(suite.blobMgr, "Delete").Return(nil)
@@ -367,12 +378,21 @@ func (suite *gcTestSuite) TestSweep() {
 				ContentType: schema2.MediaTypeLayer,
 			},
 		},
+		workers: 3,
 	}
 
 	suite.Nil(gc.sweep(ctx))
 }
 
+func (suite *gcTestSuite) TestSaveRes() {
+	ctx := &mockjobservice.MockJobContext{}
+	logger := &mockjobservice.MockJobLogger{}
+	ctx.On("GetLogger").Return(logger)
+	mock.OnAnything(ctx, "Checkin").Return(nil)
+	suite.Nil(saveGCRes(ctx, 123456, 100, 100))
+}
+
 func TestGCTestSuite(t *testing.T) {
-	os.Setenv("UTTEST", "true")
+	t.Setenv("UTTEST", "true")
 	suite.Run(t, &gcTestSuite{})
 }

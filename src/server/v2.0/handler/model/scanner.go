@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/go-openapi/strfmt"
+
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
@@ -29,7 +30,7 @@ type ScannerRegistration struct {
 }
 
 // ToSwagger ...
-func (s *ScannerRegistration) ToSwagger(ctx context.Context) *models.ScannerRegistration {
+func (s *ScannerRegistration) ToSwagger(_ context.Context) *models.ScannerRegistration {
 	if s.Registration == nil {
 		return nil
 	}
@@ -37,7 +38,7 @@ func (s *ScannerRegistration) ToSwagger(ctx context.Context) *models.ScannerRegi
 	return &models.ScannerRegistration{
 		UUID:             s.UUID,
 		Name:             s.Name,
-		URL:              s.URL,
+		URL:              strfmt.URI(s.URL),
 		Description:      s.Description,
 		Auth:             s.Auth,
 		AccessCredential: s.AccessCredential,
@@ -51,6 +52,7 @@ func (s *ScannerRegistration) ToSwagger(ctx context.Context) *models.ScannerRegi
 		Vendor:           s.Vendor,
 		Version:          s.Version,
 		Health:           s.Health,
+		Capabilities:     s.Capabilities,
 	}
 }
 
@@ -65,7 +67,7 @@ type ScannerMetadata struct {
 }
 
 // ToSwagger ...
-func (s *ScannerMetadata) ToSwagger(ctx context.Context) *models.ScannerAdapterMetadata {
+func (s *ScannerMetadata) ToSwagger(_ context.Context) *models.ScannerAdapterMetadata {
 	if s.ScannerAdapterMetadata == nil {
 		return nil
 	}
@@ -73,6 +75,7 @@ func (s *ScannerMetadata) ToSwagger(ctx context.Context) *models.ScannerAdapterM
 	var capabilities []*models.ScannerCapability
 	for _, c := range s.Capabilities {
 		capabilities = append(capabilities, &models.ScannerCapability{
+			Type:              c.Type,
 			ConsumesMimeTypes: c.ConsumesMimeTypes,
 			ProducesMimeTypes: c.ProducesMimeTypes,
 		})

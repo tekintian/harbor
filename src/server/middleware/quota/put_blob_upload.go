@@ -34,12 +34,12 @@ func PutBlobUploadMiddleware() func(http.Handler) http.Handler {
 	})
 }
 
-func putBlobUploadResources(r *http.Request, reference, referenceID string) (types.ResourceList, error) {
+func putBlobUploadResources(r *http.Request, _, referenceID string) (types.ResourceList, error) {
 	logger := log.G(r.Context()).WithFields(log.Fields{"middleware": "quota", "action": "request", "url": r.URL.Path})
 
 	size, err := strconv.ParseInt(r.Header.Get("Content-Length"), 10, 64)
 	if err != nil || size == 0 {
-		size, err = blobController.GetAcceptedBlobSize(distribution.ParseSessionID(r.URL.Path))
+		size, err = blobController.GetAcceptedBlobSize(r.Context(), distribution.ParseSessionID(r.URL.Path))
 	}
 	if err != nil {
 		logger.Errorf("get blob size failed, error: %v", err)

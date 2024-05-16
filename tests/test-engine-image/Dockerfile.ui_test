@@ -1,7 +1,14 @@
-
 #ubuntm based image
-FROM ubuntu:18.04
+FROM ubuntu:20.04
+ENV TZ=Asia/Shanghai \
+    DEBIAN_FRONTEND=noninteractive
 ENV LANG C.UTF-8
+ENV HELM_EXPERIMENTAL_OCI=1
+ENV COSIGN_PASSWORD=Harbor12345
+ENV COSIGN_EXPERIMENTAL=1
+ENV COSIGN_OCI_EXPERIMENTAL=1
+ENV NOTATION_EXPERIMENTAL=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends wget curl gnupg2
 RUN apt-get install libseccomp2
 RUN wget  --no-check-certificate -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
@@ -20,22 +27,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tar \
     unzip \
     gzip \
+    jq \
     # certutil
     libnss3-tools \
     google-chrome-stable
 
-RUN apt-get update -y ; apt-get install -y python3.6 && \
-    rm /usr/bin/python ; ln -s /usr/bin/python3.6 /usr/bin/python ; apt-get install -y python3-pip && \
+RUN apt-get update -y; apt-get install -y python3.9 && \
+    rm /usr/bin/python; ln -s /usr/bin/python3.9 /usr/bin/python; apt-get install -y python3-pip && \
     python -m pip install --upgrade pip
 
 RUN pip3 install --upgrade pip pyasn1 google-apitools==0.5.31 gsutil \
-    robotframework==3.2.1 robotframework-sshlibrary robotframework-httplibrary \
-    requests dbbot robotframework-seleniumlibrary==4.3.0 robotframework-pabot \
+    robotframework==6.0.1 robotframework-sshlibrary robotframework-httplibrary \
+    requests dbbot robotframework-seleniumlibrary robotframework-pabot \
     robotframework-JSONLibrary hurry.filesize --upgrade && \
     apt-get clean all
-
-RUN wget -N http://chromedriver.storage.googleapis.com/2.40/chromedriver_linux64.zip && \
-    unzip chromedriver_linux64.zip && \
+# Upgrade chromedriver version to 123.0.6312.86
+RUN wget -N https://storage.googleapis.com/chrome-for-testing-public/123.0.6312.86/linux64/chromedriver-linux64.zip && \
+    unzip -j chromedriver-linux64.zip && \
     chmod +x chromedriver && \
     mv -f chromedriver /usr/local/share/chromedriver && \
     ln -s /usr/local/share/chromedriver /usr/local/bin/chromedriver && \
@@ -43,7 +51,7 @@ RUN wget -N http://chromedriver.storage.googleapis.com/2.40/chromedriver_linux64
 
 RUN pwd && ls && \
     # Install docker
-    DOCKER_VERSION=20.10.3 && wget https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz && \
+    DOCKER_VERSION=26.0.0 && wget https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz && \
     tar --strip-components=1 -xvzf docker-$DOCKER_VERSION.tgz -C /usr/bin &&  \
     rm docker-$DOCKER_VERSION.tgz
 

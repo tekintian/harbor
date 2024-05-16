@@ -16,17 +16,17 @@ package test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-
-	"fmt"
 	"os"
 	"sort"
+	"strings"
+
+	"github.com/gorilla/mux"
 
 	"github.com/goharbor/harbor/src/common"
-	"github.com/gorilla/mux"
 )
 
 // RequestHandlerMapping is a mapping between request and its handler
@@ -121,10 +121,7 @@ func GetUnitTestConfig() map[string]interface{} {
 		common.LDAPGroupAttributeName: "cn",
 		common.LDAPGroupSearchScope:   2,
 		common.LDAPGroupAdminDn:       "cn=harbor_users,ou=groups,dc=example,dc=com",
-		common.WithNotary:             "false",
-		common.WithChartMuseum:        "false",
 		common.SelfRegistration:       "true",
-		common.WithTrivy:              "true",
 		common.TokenServiceURL:        "http://core:8080/service/token",
 		common.RegistryURL:            fmt.Sprintf("http://%s:5000", ipAddress),
 		common.ReadOnly:               false,

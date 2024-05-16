@@ -1,10 +1,23 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package instance
 
 import (
 	"context"
 	"fmt"
 
-	beego_orm "github.com/astaxie/beego/orm"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/p2p/preheat/models/provider"
@@ -39,8 +52,7 @@ var _ DAO = (*dao)(nil)
 
 // Create adds a new distribution instance.
 func (d *dao) Create(ctx context.Context, instance *provider.Instance) (id int64, err error) {
-	var o beego_orm.Ormer
-	o, err = orm.FromContext(ctx)
+	o, err := orm.FromContext(ctx)
 	if err != nil {
 		return
 	}
@@ -63,10 +75,13 @@ func (d *dao) Get(ctx context.Context, id int64) (*provider.Instance, error) {
 	}
 
 	di := provider.Instance{ID: id}
-	err = o.Read(&di, "ID")
-	if err == beego_orm.ErrNoRows {
-		return nil, nil
+	if err = o.Read(&di, "ID"); err != nil {
+		if e := orm.AsNotFoundError(err, "instance %d not found", id); e != nil {
+			err = e
+		}
+		return nil, err
 	}
+
 	return &di, err
 }
 
@@ -106,8 +121,7 @@ func (d *dao) Update(ctx context.Context, instance *provider.Instance, props ...
 		_, err = o.Update(instance, props...)
 		return
 	}
-	return orm.WithTransaction(trans)(ctx)
-
+	return orm.WithTransaction(trans)(orm.SetTransactionOpNameToContext(ctx, "tx-prehead-update"))
 }
 
 // Delete deletes one distribution instance by id.

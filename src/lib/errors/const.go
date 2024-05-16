@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package errors
 
 const (
@@ -13,10 +27,14 @@ const (
 	ForbiddenCode = "FORBIDDEN"
 	// MethodNotAllowedCode ...
 	MethodNotAllowedCode = "METHOD_NOT_ALLOWED"
+	// RateLimitCode
+	RateLimitCode = "TOO_MANY_REQUEST"
 	// PreconditionCode ...
 	PreconditionCode = "PRECONDITION"
 	// GeneralCode ...
 	GeneralCode = "UNKNOWN"
+	// ChallengesUnsupportedCode ...
+	ChallengesUnsupportedCode = "ChallengesUnsupportedCode"
 	// DENIED it's used by middleware(readonly, vul and content trust) and returned to docker client to index the request is denied.
 	DENIED = "DENIED"
 	// PROJECTPOLICYVIOLATION ...
@@ -84,4 +102,13 @@ func IsNotFoundErr(err error) bool {
 // IsConflictErr checks whether the err chain contains conflict error
 func IsConflictErr(err error) bool {
 	return IsErr(err, ConflictCode)
+}
+
+func IsChallengesUnsupportedErr(err error) bool {
+	return IsErr(err, ChallengesUnsupportedCode)
+}
+
+// IsRateLimitError checks whether the err chains contains rate limit error
+func IsRateLimitError(err error) bool {
+	return IsErr(err, RateLimitCode)
 }

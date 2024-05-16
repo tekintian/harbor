@@ -1,33 +1,32 @@
 // Copyright Project Harbor Authors
 //
-// licensed under the apache license, version 2.0 (the "license");
-// you may not use this file except in compliance with the license.
-// you may obtain a copy of the license at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/license-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-// unless required by applicable law or agreed to in writing, software
-// distributed under the license is distributed on an "as is" basis,
-// without warranties or conditions of any kind, either express or implied.
-// see the license for the specific language governing permissions and
-// limitations under the license.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package dao
 
 import (
 	"fmt"
-	"github.com/goharbor/harbor/src/common/models"
 	"os"
 	"strconv"
 
+	"github.com/beego/beego/v2/client/orm"
+
+	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/log"
 )
 
 var defaultRegistered = false
-
-// PrepareTestForMySQL is for test only.
-func PrepareTestForMySQL() {
-}
+var o orm.Ormer
 
 // PrepareTestForSQLite is for test only.
 func PrepareTestForSQLite() {
@@ -72,13 +71,14 @@ func PrepareTestForPostgresSQL() {
 	}
 
 	log.Infof("POSTGRES_HOST: %s, POSTGRES_USR: %s, POSTGRES_PORT: %d, POSTGRES_PWD: %s\n", dbHost, dbUser, dbPort, dbPassword)
-	initDatabaseForTest(database)
+	o = initDatabaseForTest(database)
 }
 
-func initDatabaseForTest(db *models.Database) {
+func initDatabaseForTest(db *models.Database) orm.Ormer {
 	database, err := getDatabase(db)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
+		return nil
 	}
 
 	log.Infof("initializing database: %s", database.String())
@@ -89,17 +89,18 @@ func initDatabaseForTest(db *models.Database) {
 		alias = "default"
 	}
 	if err := database.Register(alias); err != nil {
-		panic(err)
+		log.Fatal(err)
+		return nil
 	}
 	if err := database.UpgradeSchema(); err != nil {
-		panic(err)
+		log.Fatal(err)
+		return nil
 	}
 
 	if alias != "default" {
-		if err = GetOrmer().Using(alias); err != nil {
-			log.Fatalf("failed to create new orm: %v", err)
-		}
+		return orm.NewOrmUsingDB(alias)
 	}
+	return GetOrmer()
 }
 
 // PrepareTestData -- Clean and Create data

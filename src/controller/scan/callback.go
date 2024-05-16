@@ -16,14 +16,15 @@ package scan
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event/metadata"
+	"github.com/goharbor/harbor/src/controller/event/operator"
 	"github.com/goharbor/harbor/src/controller/robot"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/notification"
-	"github.com/goharbor/harbor/src/pkg/scan"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
 	"github.com/goharbor/harbor/src/pkg/scheduler"
 	"github.com/goharbor/harbor/src/pkg/task"
@@ -39,6 +40,7 @@ var (
 	robotCtl    = robot.Ctl
 	scanCtl     = DefaultController
 	taskMgr     = task.Mgr
+	execMgr     = task.ExecMgr
 )
 
 func init() {
@@ -47,24 +49,27 @@ func init() {
 	}
 
 	// NOTE: the vendor type of execution for the scan job trigger by the scan all is VendorTypeScanAll
-	if err := task.RegisterCheckInProcessor(VendorTypeScanAll, scanTaskCheckInProcessor); err != nil {
-		log.Fatalf("failed to register the checkin processor for the scan all job, error %v", err)
-	}
-
-	if err := task.RegisterTaskStatusChangePostFunc(VendorTypeScanAll, scanTaskStatusChange); err != nil {
+	if err := task.RegisterTaskStatusChangePostFunc(job.ScanAllVendorType, scanTaskStatusChange); err != nil {
 		log.Fatalf("failed to register the task status change post for the scan all job, error %v", err)
 	}
 
-	if err := task.RegisterCheckInProcessor(job.ImageScanJob, scanTaskCheckInProcessor); err != nil {
-		log.Fatalf("failed to register the checkin processor for the scan job, error %v", err)
-	}
-
-	if err := task.RegisterTaskStatusChangePostFunc(job.ImageScanJob, scanTaskStatusChange); err != nil {
+	if err := task.RegisterTaskStatusChangePostFunc(job.ImageScanJobVendorType, scanTaskStatusChange); err != nil {
 		log.Fatalf("failed to register the task status change post for the scan job, error %v", err)
 	}
 }
 
 func scanAllCallback(ctx context.Context, param string) error {
+	if param != "" {
+		params := make(map[string]interface{})
+		if err := json.Unmarshal([]byte(param), &params); err != nil {
+			return err
+		}
+
+		if op, ok := params["operator"].(string); ok {
+			ctx = context.WithValue(ctx, operator.ContextKey{}, op)
+		}
+	}
+
 	_, err := scanCtl.ScanAll(ctx, task.ExecutionTriggerSchedule, true)
 	return err
 }
@@ -76,6 +81,11 @@ func scanTaskStatusChange(ctx context.Context, taskID int64, status string) (err
 
 	if js.Final() {
 		t, err := taskMgr.Get(ctx, taskID)
+		if err != nil {
+			return err
+		}
+
+		exec, err := execMgr.Get(ctx, t.ExecutionID)
 		if err != nil {
 			return err
 		}
@@ -101,27 +111,27 @@ func scanTaskStatusChange(ctx context.Context, taskID int64, status string) (err
 						NamespaceID: art.ProjectID,
 						Repository:  art.RepositoryName,
 						Digest:      art.Digest,
+						Tag:         getArtifactTag(t.ExtraAttrs),
 						MimeType:    art.ManifestMediaType,
 					},
 					Status: status,
+				}
+
+				if operator, ok := exec.ExtraAttrs["operator"].(string); ok {
+					e.Operator = operator
+				}
+
+				// extract ScanType if exist in ExtraAttrs
+				if c, ok := exec.ExtraAttrs["enabled_capabilities"].(map[string]interface{}); ok {
+					if Type, ok := c["type"].(string); ok {
+						e.ScanType = Type
+					}
 				}
 				// fire event
 				notification.AddEvent(ctx, e)
 			}
 		}
-
 	}
 
 	return nil
-}
-
-// scanTaskCheckInProcessor checkin processor handles the webhook of scan job
-func scanTaskCheckInProcessor(ctx context.Context, t *task.Task, data string) (err error) {
-	checkInReport := &scan.CheckInReport{}
-	if err := checkInReport.FromJSON(data); err != nil {
-		log.G(ctx).WithField("error", err).Errorf("failed to convert data to report")
-		return err
-	}
-
-	return scanCtl.UpdateReport(ctx, checkInReport)
 }

@@ -21,6 +21,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/goharbor/harbor/src/common"
 )
@@ -37,7 +38,7 @@ type Type interface {
 type StringType struct {
 }
 
-func (t *StringType) validate(str string) error {
+func (t *StringType) validate(_ string) error {
 	return nil
 }
 
@@ -90,12 +91,12 @@ type IntType struct {
 }
 
 func (t *IntType) validate(str string) error {
-	_, err := strconv.Atoi(str)
+	_, err := parseInt(str)
 	return err
 }
 
 func (t *IntType) get(str string) (interface{}, error) {
-	return strconv.Atoi(str)
+	return parseInt(str)
 }
 
 // PortType ...
@@ -148,6 +149,17 @@ func (t *Int64Type) get(str string) (interface{}, error) {
 	return parseInt64(str)
 }
 
+type Float64Type struct{}
+
+func (f *Float64Type) validate(str string) error {
+	_, err := parseFloat64(str)
+	return err
+}
+
+func (f *Float64Type) get(str string) (interface{}, error) {
+	return parseFloat64(str)
+}
+
 // BoolType ...
 type BoolType struct {
 }
@@ -165,7 +177,7 @@ func (t *BoolType) get(str string) (interface{}, error) {
 type PasswordType struct {
 }
 
-func (t *PasswordType) validate(str string) error {
+func (t *PasswordType) validate(_ string) error {
 	return nil
 }
 
@@ -223,6 +235,20 @@ func (t *QuotaType) validate(str string) error {
 	return nil
 }
 
+// DurationType ...
+type DurationType struct {
+}
+
+func (t *DurationType) validate(str string) error {
+	_, err := time.ParseDuration(str)
+	return err
+}
+
+func (t *DurationType) get(str string) (interface{}, error) {
+	// should not parse the duration to avoid duplicate parse.
+	return str, nil
+}
+
 // parseInt64 returns int64 from string which support scientific notation
 func parseInt64(str string) (int64, error) {
 	val, err := strconv.ParseInt(str, 10, 64)
@@ -236,4 +262,27 @@ func parseInt64(str string) (int64, error) {
 	}
 
 	return 0, fmt.Errorf("invalid int64 string: %s", str)
+}
+
+func parseInt(str string) (int, error) {
+	val, err := strconv.ParseInt(str, 10, 32)
+	if err == nil {
+		return int(val), nil
+	}
+
+	fval, err := strconv.ParseFloat(str, 32)
+	if err == nil && fval == math.Trunc(fval) {
+		return int(fval), nil
+	}
+
+	return 0, fmt.Errorf("invalid int string: %s", str)
+}
+
+func parseFloat64(str string) (float64, error) {
+	val, err := strconv.ParseFloat(str, 64)
+	if err == nil {
+		return val, nil
+	}
+
+	return 0, fmt.Errorf("invalid float64 string: %s", str)
 }

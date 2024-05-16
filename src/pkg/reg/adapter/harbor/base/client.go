@@ -17,6 +17,7 @@ package base
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	common_http "github.com/goharbor/harbor/src/common/http"
@@ -59,17 +60,6 @@ func (c *Client) GetAPIVersion() (string, error) {
 	return "", err
 }
 
-// ChartRegistryEnabled returns whether the chart registry is enabled for the Harbor instance
-func (c *Client) ChartRegistryEnabled() (bool, error) {
-	sys := &struct {
-		ChartRegistryEnabled bool `json:"with_chartmuseum"`
-	}{}
-	if err := c.C.Get(c.BasePath()+"/systeminfo", sys); err != nil {
-		return false, err
-	}
-	return sys.ChartRegistryEnabled, nil
-}
-
 // ListLabels lists system level labels
 func (c *Client) ListLabels() ([]string, error) {
 	labels := []*struct {
@@ -109,6 +99,19 @@ func (c *Client) ListProjects(name string) ([]*Project, error) {
 	if err := c.C.GetAndIteratePagination(url, &projects); err != nil {
 		return nil, err
 	}
+	return projects, nil
+}
+
+// ListProjectsWithQuery lists projects with query
+func (c *Client) ListProjectsWithQuery(q string, withDetail bool) ([]*Project, error) {
+	projects := []*Project{}
+	// if old version does not support query, it will fallback to normal
+	// list(list all).
+	url := fmt.Sprintf("%s/projects?q=%s&with_detail=%t", c.BasePath(), url.QueryEscape(q), withDetail)
+	if err := c.C.GetAndIteratePagination(url, &projects); err != nil {
+		return nil, err
+	}
+
 	return projects, nil
 }
 

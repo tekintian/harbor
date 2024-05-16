@@ -3,7 +3,6 @@ package immutable
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/controller/immutable"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -11,18 +10,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/models"
-	"github.com/goharbor/harbor/src/lib"
-	internal_orm "github.com/goharbor/harbor/src/lib/orm"
-	"github.com/goharbor/harbor/src/pkg/artifact"
-	immu_model "github.com/goharbor/harbor/src/pkg/immutable/model"
-	"github.com/goharbor/harbor/src/pkg/repository"
-	"github.com/goharbor/harbor/src/pkg/tag"
-	tag_model "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/common/dao"
+	"github.com/goharbor/harbor/src/controller/immutable"
+	"github.com/goharbor/harbor/src/lib"
+	internal_orm "github.com/goharbor/harbor/src/lib/orm"
+	"github.com/goharbor/harbor/src/pkg"
+	"github.com/goharbor/harbor/src/pkg/artifact"
+	immu_model "github.com/goharbor/harbor/src/pkg/immutable/model"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	"github.com/goharbor/harbor/src/pkg/repository/model"
+	"github.com/goharbor/harbor/src/pkg/tag"
+	tag_model "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 )
 
 type HandlerSuite struct {
@@ -70,8 +72,8 @@ func randomString(n int) string {
 	return string(b)
 }
 
-func (suite *HandlerSuite) addProject(projectName string) int64 {
-	projectID, err := dao.AddProject(models.Project{
+func (suite *HandlerSuite) addProject(ctx context.Context, projectName string) int64 {
+	projectID, err := pkg.ProjectMgr.Create(ctx, &proModels.Project{
 		Name:    projectName,
 		OwnerID: 1,
 	})
@@ -90,17 +92,17 @@ func (suite *HandlerSuite) addArt(ctx context.Context, pid, repositoryID int64, 
 		PushTime:       time.Now(),
 		PullTime:       time.Now(),
 	}
-	afid, err := artifact.Mgr.Create(ctx, af)
+	afid, err := pkg.ArtifactMgr.Create(ctx, af)
 	suite.Nil(err, fmt.Sprintf("Add artifact failed for %d", repositoryID))
 	return afid
 }
 
 func (suite *HandlerSuite) addRepo(ctx context.Context, pid int64, repo string) int64 {
-	repoRec := &models.RepoRecord{
+	repoRec := &model.RepoRecord{
 		Name:      repo,
 		ProjectID: pid,
 	}
-	repoid, err := repository.Mgr.Create(ctx, repoRec)
+	repoid, err := pkg.RepositoryMgr.Create(ctx, repoRec)
 	suite.Nil(err, fmt.Sprintf("Add repository failed for %s", repo))
 	return repoid
 }
@@ -152,16 +154,16 @@ func (suite *HandlerSuite) TestPutDeleteManifestCreated() {
 	dgt := digest.FromString(randomString(15)).String()
 	ctx := internal_orm.NewContext(context.TODO(), dao.GetOrmer())
 
-	projectID := suite.addProject(projectName)
+	projectID := suite.addProject(ctx, projectName)
 	immuRuleID := suite.addImmutableRule(projectID)
 	repoID := suite.addRepo(ctx, projectID, repoName)
 	afID := suite.addArt(ctx, projectID, repoID, repoName, dgt)
 	tagID := suite.addTags(ctx, repoID, afID, "release-1.10")
 
 	defer func() {
-		dao.DeleteProject(projectID)
-		artifact.Mgr.Delete(ctx, afID)
-		repository.Mgr.Delete(ctx, repoID)
+		pkg.ProjectMgr.Delete(ctx, projectID)
+		pkg.ArtifactMgr.Delete(ctx, afID)
+		pkg.RepositoryMgr.Delete(ctx, repoID)
 		tag.Mgr.Delete(ctx, tagID)
 		immutable.Ctr.DeleteImmutableRule(internal_orm.Context(), immuRuleID)
 	}()

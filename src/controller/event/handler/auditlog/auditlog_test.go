@@ -18,15 +18,17 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	common_dao "github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/controller/event"
 	"github.com/goharbor/harbor/src/controller/event/metadata"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/audit/model"
+	_ "github.com/goharbor/harbor/src/pkg/config/db"
 	"github.com/goharbor/harbor/src/pkg/notifier"
 	ne "github.com/goharbor/harbor/src/pkg/notifier/event"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type MockAuditLogManager struct {
@@ -79,7 +81,7 @@ func (suite *AuditLogHandlerTestSuite) TestSubscribeTagEvent() {
 
 	notifier.Subscribe(event.TopicCreateProject, suite.auditLogHandler)
 	// event data should implement the interface TopicEvent
-	ne.BuildAndPublish(&metadata.CreateProjectEventMetadata{
+	ne.BuildAndPublish(context.TODO(), &metadata.CreateProjectEventMetadata{
 		ProjectID: 1,
 		Project:   "test",
 		Operator:  "admin",

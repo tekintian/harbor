@@ -1,14 +1,16 @@
 package blob
 
 import (
-	"github.com/docker/distribution/registry/storage/driver/inmemory"
-	"github.com/docker/distribution/testutil"
-	"github.com/goharbor/harbor/src/registryctl/api/registry/test"
-	"github.com/gorilla/mux"
-	"github.com/stretchr/testify/assert"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/docker/distribution/registry/storage/driver/inmemory"
+	"github.com/docker/distribution/testutil"
+	"github.com/gorilla/mux"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/goharbor/harbor/src/registryctl/api/registry/test"
 )
 
 func TestDeletionBlob(t *testing.T) {
@@ -40,6 +42,9 @@ func TestDeletionBlob(t *testing.T) {
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
+	if err != nil {
+		t.Fatalf("failed to create new http request: %v", err)
+	}
 	varMap := make(map[string]string, 1)
 	varMap["reference"] = test.GetKeys(randomLayers1)[0].String()
 	req = mux.SetURLVars(req, varMap)

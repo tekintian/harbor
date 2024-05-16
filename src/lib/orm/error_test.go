@@ -15,12 +15,14 @@
 package orm
 
 import (
-	"github.com/astaxie/beego/orm"
-	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/lib/pq"
+	"testing"
+
+	"github.com/beego/beego/v2/client/orm"
+	"github.com/jackc/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
+
+	"github.com/goharbor/harbor/src/lib/errors"
 )
 
 func TestIsNotFoundError(t *testing.T) {
@@ -51,7 +53,7 @@ func TestIsConflictError(t *testing.T) {
 
 	// pass
 	message := "message"
-	err = AsConflictError(&pq.Error{
+	err = AsConflictError(&pgconn.PgError{
 		Code: "23505",
 	}, message)
 	require.NotNil(t, err)
@@ -70,7 +72,7 @@ func TestIsForeignKeyError(t *testing.T) {
 
 	// pass
 	message := "message"
-	err = AsForeignKeyError(&pq.Error{
+	err = AsForeignKeyError(&pgconn.PgError{
 		Code: "23503",
 	}, message)
 	require.NotNil(t, err)

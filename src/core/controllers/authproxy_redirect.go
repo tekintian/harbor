@@ -1,14 +1,27 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package controllers
 
 import (
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"net/http"
 
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/core/api"
 	"github.com/goharbor/harbor/src/core/auth/authproxy"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
 )
 
@@ -26,7 +39,7 @@ type AuthProxyController struct {
 
 // Prepare checks the auth mode and fail early
 func (apc *AuthProxyController) Prepare() {
-	am, err := config.AuthMode(orm.Context())
+	am, err := config.AuthMode(apc.Context())
 	if err != nil {
 		apc.SendInternalServerError(err)
 		return
@@ -45,13 +58,13 @@ func (apc *AuthProxyController) HandleRedirect() {
 		apc.Ctx.Redirect(http.StatusMovedPermanently, "/")
 		return
 	}
-	u, err := helper.VerifyToken(token)
+	u, err := helper.VerifyToken(apc.Context(), token)
 	if err != nil {
 		log.Errorf("Failed to verify token, error: %v", err)
 		apc.Ctx.Redirect(http.StatusMovedPermanently, "/")
 		return
 	}
-	if err := helper.PostAuthenticate(u); err != nil {
+	if err := helper.PostAuthenticate(apc.Context(), u); err != nil {
 		log.Errorf("Failed to onboard user, error: %v", err)
 		apc.Ctx.Redirect(http.StatusMovedPermanently, "/")
 		return
@@ -62,5 +75,4 @@ func (apc *AuthProxyController) HandleRedirect() {
 		uri = "/"
 	}
 	apc.Ctx.Redirect(http.StatusMovedPermanently, uri)
-	return
 }

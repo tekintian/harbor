@@ -1,22 +1,25 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package proxy
 
 import (
 	"context"
+	"io"
+
 	"github.com/docker/distribution"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/event/metadata"
 	"github.com/goharbor/harbor/src/lib"
@@ -27,7 +30,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/notifier/event"
 	"github.com/goharbor/harbor/src/pkg/proxy/secret"
 	"github.com/goharbor/harbor/src/pkg/registry"
-	"io"
 )
 
 // TrimmedManifestlist - key prefix for trimmed manifest
@@ -79,7 +81,7 @@ func newLocalHelper() localInterface {
 	return l
 }
 
-func (l *localHelper) BlobExist(ctx context.Context, art lib.ArtifactInfo) (bool, error) {
+func (l *localHelper) BlobExist(_ context.Context, art lib.ArtifactInfo) (bool, error) {
 	return l.registry.BlobExist(art.Repository, art.Digest)
 }
 
@@ -150,11 +152,11 @@ func (l *localHelper) CheckDependencies(ctx context.Context, repo string, man di
 }
 
 // SendPullEvent send a pull image event
-func SendPullEvent(a *artifact.Artifact, tag, operator string) {
+func SendPullEvent(ctx context.Context, a *artifact.Artifact, tag, operator string) {
 	e := &metadata.PullArtifactEventMetadata{
 		Artifact: &a.Artifact,
 		Tag:      tag,
 		Operator: operator,
 	}
-	event.BuildAndPublish(e)
+	event.BuildAndPublish(ctx, e)
 }

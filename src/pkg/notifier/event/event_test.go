@@ -1,11 +1,14 @@
 package event
 
 import (
-	policy_model "github.com/goharbor/harbor/src/pkg/notification/policy/model"
-	notifierModel "github.com/goharbor/harbor/src/pkg/notifier/model"
+	"context"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
+
+	policy_model "github.com/goharbor/harbor/src/pkg/notification/policy/model"
+	notifierModel "github.com/goharbor/harbor/src/pkg/notifier/model"
 )
 
 func TestHookEvent_Build(t *testing.T) {
@@ -41,7 +44,7 @@ func TestHookEvent_Build(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			event := &Event{}
-			err := event.Build(tt.args.hookMetadata)
+			err := event.Build(context.TODO(), tt.args.hookMetadata)
 			if tt.wantErr {
 				require.NotNil(t, err, "Error: %s", err)
 				return
@@ -74,7 +77,7 @@ func TestEvent_Publish(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.args.event.Publish()
+			err := tt.args.event.Publish(context.TODO())
 			if tt.wantErr {
 				require.NotNil(t, err, "Error: %s", err)
 				return

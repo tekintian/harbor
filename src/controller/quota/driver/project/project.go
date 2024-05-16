@@ -17,17 +17,19 @@ package project
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
-	"github.com/goharbor/harbor/src/pkg/config/db"
 	"strconv"
 
+	"github.com/graph-gophers/dataloader"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/controller/blob"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/config/db"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	dr "github.com/goharbor/harbor/src/pkg/quota/driver"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
-	"github.com/graph-gophers/dataloader"
 )
 
 func init() {
@@ -41,7 +43,7 @@ type driver struct {
 	blobCtl blob.Controller
 }
 
-func (d *driver) Enabled(ctx context.Context, key string) (bool, error) {
+func (d *driver) Enabled(ctx context.Context, _ string) (bool, error) {
 	// NOTE: every time load the new configurations from the db to get the latest configurations may have performance problem.
 	if err := d.cfg.Load(ctx); err != nil {
 		return false, err
@@ -68,7 +70,7 @@ func (d *driver) Load(ctx context.Context, key string) (dr.RefObject, error) {
 		return nil, err
 	}
 
-	project, ok := result.(*models.Project)
+	project, ok := result.(*proModels.Project)
 	if !ok {
 		return nil, fmt.Errorf("bad result for project: %s", key)
 	}
@@ -90,8 +92,8 @@ func (d *driver) Validate(hardLimits types.ResourceList) error {
 			return fmt.Errorf("resource %s not support", resource)
 		}
 
-		if value <= 0 && value != types.UNLIMITED {
-			return fmt.Errorf("invalid value for resource %s", resource)
+		if err := lib.ValidateQuotaLimit(value); err != nil {
+			return err
 		}
 	}
 

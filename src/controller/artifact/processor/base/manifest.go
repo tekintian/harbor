@@ -17,11 +17,13 @@ package base
 import (
 	"context"
 	"encoding/json"
+
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/goharbor/harbor/src/controller/artifact/processor"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/registry"
-	"github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // NewManifestProcessor creates a new base manifest processor.
@@ -62,23 +64,23 @@ func (m *ManifestProcessor) AbstractMetadata(ctx context.Context, artifact *arti
 }
 
 // AbstractAddition abstracts the addition of artifact
-func (m *ManifestProcessor) AbstractAddition(ctx context.Context, artifact *artifact.Artifact, addition string) (*processor.Addition, error) {
+func (m *ManifestProcessor) AbstractAddition(_ context.Context, _ *artifact.Artifact, addition string) (*processor.Addition, error) {
 	return nil, errors.New(nil).WithCode(errors.BadRequestCode).
 		WithMessage("addition %s isn't supported", addition)
 }
 
 // GetArtifactType returns the artifact type
-func (m *ManifestProcessor) GetArtifactType(ctx context.Context, artifact *artifact.Artifact) string {
+func (m *ManifestProcessor) GetArtifactType(_ context.Context, _ *artifact.Artifact) string {
 	return ""
 }
 
 // ListAdditionTypes returns the supported addition types
-func (m *ManifestProcessor) ListAdditionTypes(ctx context.Context, artifact *artifact.Artifact) []string {
+func (m *ManifestProcessor) ListAdditionTypes(_ context.Context, _ *artifact.Artifact) []string {
 	return nil
 }
 
 // UnmarshalConfig unmarshal the config blob of the artifact into the specified object "v"
-func (m *ManifestProcessor) UnmarshalConfig(ctx context.Context, repository string, manifest []byte, v interface{}) error {
+func (m *ManifestProcessor) UnmarshalConfig(_ context.Context, repository string, manifest []byte, v interface{}) error {
 	// unmarshal manifest
 	mani := &v1.Manifest{}
 	if err := json.Unmarshal(manifest, mani); err != nil {

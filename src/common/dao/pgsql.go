@@ -16,31 +16,36 @@ package dao
 
 import (
 	"fmt"
-	"github.com/goharbor/harbor/src/common/models"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
+	migrate "github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/pgx" // import pgx driver for migrator
+	_ "github.com/golang-migrate/migrate/v4/source/file"  // import local file driver for migrator
+	_ "github.com/jackc/pgx/v4/stdlib"                    // registry pgx driver
+
+	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib/log"
-	migrate "github.com/golang-migrate/migrate/v4"
-	_ "github.com/golang-migrate/migrate/v4/database/postgres" // import pgsql driver for migrator
-	_ "github.com/golang-migrate/migrate/v4/source/file"       // import local file driver for migrator
-	_ "github.com/lib/pq"                                      // register pgsql driver
 )
 
 const defaultMigrationPath = "migrations/postgresql/"
 
 type pgsql struct {
-	host         string
-	port         string
-	usr          string
-	pwd          string
-	database     string
-	sslmode      string
-	maxIdleConns int
-	maxOpenConns int
+	host            string
+	port            string
+	usr             string
+	pwd             string
+	database        string
+	sslmode         string
+	maxIdleConns    int
+	maxOpenConns    int
+	connMaxLifetime time.Duration
+	connMaxIdleTime time.Duration
 }
 
 // Name returns the name of PostgreSQL
@@ -55,29 +60,31 @@ func (p *pgsql) String() string {
 }
 
 // NewPGSQL returns an instance of postgres
-func NewPGSQL(host string, port string, usr string, pwd string, database string, sslmode string, maxIdleConns int, maxOpenConns int) Database {
+func NewPGSQL(host string, port string, usr string, pwd string, database string, sslmode string, maxIdleConns int, maxOpenConns int, connMaxLifetime time.Duration, connMaxIdleTime time.Duration) Database {
 	if len(sslmode) == 0 {
 		sslmode = "disable"
 	}
 	return &pgsql{
-		host:         host,
-		port:         port,
-		usr:          usr,
-		pwd:          pwd,
-		database:     database,
-		sslmode:      sslmode,
-		maxIdleConns: maxIdleConns,
-		maxOpenConns: maxOpenConns,
+		host:            host,
+		port:            port,
+		usr:             usr,
+		pwd:             pwd,
+		database:        database,
+		sslmode:         sslmode,
+		maxIdleConns:    maxIdleConns,
+		maxOpenConns:    maxOpenConns,
+		connMaxLifetime: connMaxLifetime,
+		connMaxIdleTime: connMaxIdleTime,
 	}
 }
 
 // Register registers pgSQL to orm with the info wrapped by the instance.
 func (p *pgsql) Register(alias ...string) error {
-	if err := utils.TestTCPConn(fmt.Sprintf("%s:%s", p.host, p.port), 60, 2); err != nil {
+	if err := utils.TestTCPConn(net.JoinHostPort(p.host, p.port), 60, 2); err != nil {
 		return err
 	}
 
-	if err := orm.RegisterDriver("postgres", orm.DRPostgres); err != nil {
+	if err := orm.RegisterDriver("pgx", orm.DRPostgres); err != nil {
 		return err
 	}
 
@@ -88,28 +95,29 @@ func (p *pgsql) Register(alias ...string) error {
 	info := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s timezone=UTC",
 		p.host, p.port, p.usr, p.pwd, p.database, p.sslmode)
 
-	if err := orm.RegisterDataBase(an, "postgres", info, p.maxIdleConns, p.maxOpenConns); err != nil {
+	if err := orm.RegisterDataBase(an, "pgx", info, orm.MaxIdleConnections(p.maxIdleConns),
+		orm.MaxOpenConnections(p.maxOpenConns), orm.ConnMaxLifetime(p.connMaxLifetime)); err != nil {
 		return err
 	}
 
-	// Due to the issues of beego v1.12.1 and v1.12.2, we set the max open conns ourselves.
-	// See https://github.com/goharbor/harbor/issues/12403
-	// and https://github.com/astaxie/beego/issues/4059 for more info.
-	db, _ := orm.GetDB(an)
-	db.SetMaxOpenConns(p.maxOpenConns)
+	db, err := orm.GetDB(an)
+	if err != nil {
+		return err
+	}
+	db.SetConnMaxIdleTime(p.connMaxIdleTime)
 
 	return nil
 }
 
 // UpgradeSchema calls migrate tool to upgrade schema to the latest based on the SQL scripts.
 func (p *pgsql) UpgradeSchema() error {
-	port, err := strconv.ParseInt(p.port, 10, 64)
+	port, err := strconv.Atoi(p.port)
 	if err != nil {
 		return err
 	}
 	m, err := NewMigrator(&models.PostGreSQL{
 		Host:     p.host,
-		Port:     int(port),
+		Port:     port,
 		Username: p.usr,
 		Password: p.pwd,
 		Database: p.database,
@@ -138,9 +146,9 @@ func (p *pgsql) UpgradeSchema() error {
 // NewMigrator creates a migrator base on the information
 func NewMigrator(database *models.PostGreSQL) (*migrate.Migrate, error) {
 	dbURL := url.URL{
-		Scheme:   "postgres",
+		Scheme:   "pgx",
 		User:     url.UserPassword(database.Username, database.Password),
-		Host:     fmt.Sprintf("%s:%d", database.Host, database.Port),
+		Host:     net.JoinHostPort(database.Host, strconv.Itoa(database.Port)),
 		Path:     database.Database,
 		RawQuery: fmt.Sprintf("sslmode=%s", database.SSLMode),
 	}

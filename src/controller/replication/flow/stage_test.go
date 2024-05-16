@@ -17,11 +17,12 @@ package flow
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type stageTestSuite struct {
@@ -52,11 +53,6 @@ func (s *stageTestSuite) TestInitialize() {
 
 func (s *stageTestSuite) TestFetchResources() {
 	adapter := &mockAdapter{}
-	adapter.On("Info").Return(&model.RegistryInfo{
-		SupportedResourceTypes: []string{
-			model.ResourceTypeArtifact,
-		},
-	}, nil)
 	adapter.On("FetchArtifacts", mock.Anything).Return([]*model.Resource{
 		{},
 		{},
@@ -71,7 +67,7 @@ func (s *stageTestSuite) TestFetchResources() {
 func (s *stageTestSuite) TestAssembleSourceResources() {
 	resources := []*model.Resource{
 		{
-			Type: model.ResourceTypeChart,
+			Type: model.ResourceTypeArtifact,
 			Metadata: &model.ResourceMetadata{
 				Repository: &model.Repository{
 					Name: "library/hello-world",
@@ -94,7 +90,7 @@ func (s *stageTestSuite) TestAssembleSourceResources() {
 func (s *stageTestSuite) TestAssembleDestinationResources() {
 	resources := []*model.Resource{
 		{
-			Type: model.ResourceTypeChart,
+			Type: model.ResourceTypeArtifact,
 			Metadata: &model.ResourceMetadata{
 				Repository: &model.Repository{
 					Name: "library/hello-world",
@@ -110,10 +106,10 @@ func (s *stageTestSuite) TestAssembleDestinationResources() {
 		DestNamespaceReplaceCount: -1,
 		Override:                  true,
 	}
-	res, err := assembleDestinationResources(resources, policy)
+	res, err := assembleDestinationResources(resources, policy, "")
 	s.Require().Nil(err)
 	s.Len(res, 1)
-	s.Equal(model.ResourceTypeChart, res[0].Type)
+	s.Equal(model.ResourceTypeArtifact, res[0].Type)
 	s.Equal("test/hello-world", res[0].Metadata.Repository.Name)
 	s.Equal(1, len(res[0].Metadata.Vtags))
 	s.Equal("latest", res[0].Metadata.Vtags[0])
@@ -126,7 +122,7 @@ func (s *stageTestSuite) TestReplaceNamespace() {
 		namespace    string = ""
 		replaceCount int8   = 0
 	)
-	result, err := replaceNamespace(repository, namespace, replaceCount)
+	result, err := replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("c", result)
 
@@ -134,7 +130,7 @@ func (s *stageTestSuite) TestReplaceNamespace() {
 	repository = "c"
 	namespace = "n"
 	replaceCount = -1
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("n/c", result)
 
@@ -142,7 +138,7 @@ func (s *stageTestSuite) TestReplaceNamespace() {
 	repository = "b/c"
 	namespace = "n"
 	replaceCount = -1
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("n/c", result)
 
@@ -150,22 +146,22 @@ func (s *stageTestSuite) TestReplaceNamespace() {
 	repository = "a/b/c"
 	namespace = "n"
 	replaceCount = -1
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("n/c", result)
 
 	// replace count > actual sub strings
 	repository = "a/b"
 	namespace = "n"
-	replaceCount = 3
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	replaceCount = 2
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().NotNil(err)
 
 	// replace count = 0
 	repository = "a/b/c"
 	namespace = "n"
 	replaceCount = 0
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("n/a/b/c", result)
 
@@ -173,7 +169,7 @@ func (s *stageTestSuite) TestReplaceNamespace() {
 	repository = "a/b/c"
 	namespace = "n"
 	replaceCount = 1
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("n/b/c", result)
 
@@ -181,18 +177,24 @@ func (s *stageTestSuite) TestReplaceNamespace() {
 	repository = "a/b/c"
 	namespace = "n"
 	replaceCount = 2
-	result, err = replaceNamespace(repository, namespace, replaceCount)
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
 	s.Require().Nil(err)
 	s.Equal("n/c", result)
 
-	// replace count = 3
+	// the generated destination namespace contains 3 path component, but the destination registry requires only 2
 	repository = "a/b/c"
 	namespace = "n"
-	replaceCount = 3
-	result, err = replaceNamespace(repository, namespace, replaceCount)
-	s.Require().Nil(err)
-	s.Equal("n", result)
+	replaceCount = 1
+	result, err = replaceNamespace(repository, namespace, replaceCount, model.RepositoryPathComponentTypeOnlyTwo)
+	s.Require().NotNil(err)
 
+	// replace count =0, repository contains no "/"
+	repository = "a"
+	namespace = "n"
+	replaceCount = 0
+	result, err = replaceNamespace(repository, namespace, replaceCount, "")
+	s.Require().Nil(err)
+	s.Equal("n/a", result)
 }
 
 func TestStage(t *testing.T) {

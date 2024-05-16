@@ -15,7 +15,7 @@
 package base
 
 import (
-	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -24,6 +24,7 @@ import (
 	common_http "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/common/http/modifier"
 	common_http_auth "github.com/goharbor/harbor/src/common/http/modifier/auth"
+	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
@@ -40,7 +41,7 @@ func New(registry *model.Registry) (*Adapter, error) {
 			// core, so insecure transport is ok
 			// If using the secure one, as we'll replace the URL with 127.0.0.1 and this will
 			// cause error "x509: cannot validate certificate for 127.0.0.1 because it doesn't contain any IP SANs"
-			Transport: common_http.GetHTTPTransport(common_http.InsecureTransport),
+			Transport: common_http.GetHTTPTransport(common_http.WithInsecure(true)),
 		}, authorizer)
 		client, err := NewClient(registry.URL, httpClient)
 		if err != nil {
@@ -50,7 +51,6 @@ func New(registry *model.Registry) (*Adapter, error) {
 			Adapter:    native.NewAdapterWithAuthorizer(registry, authorizer),
 			Registry:   registry,
 			Client:     client,
-			url:        registry.URL,
 			httpClient: httpClient,
 		}, nil
 	}
@@ -62,7 +62,7 @@ func New(registry *model.Registry) (*Adapter, error) {
 			registry.Credential.AccessSecret))
 	}
 	httpClient := common_http.NewClient(&http.Client{
-		Transport: common_http.GetHTTPTransportByInsecure(registry.Insecure),
+		Transport: common_http.GetHTTPTransport(common_http.WithInsecure(registry.Insecure)),
 	}, authorizers...)
 	client, err := NewClient(registry.URL, httpClient)
 	if err != nil {
@@ -72,7 +72,6 @@ func New(registry *model.Registry) (*Adapter, error) {
 		Adapter:    native.NewAdapter(registry),
 		Registry:   registry,
 		Client:     client,
-		url:        registry.URL,
 		httpClient: httpClient,
 	}, nil
 }
@@ -83,8 +82,6 @@ type Adapter struct {
 	Registry *model.Registry
 	Client   *Client
 
-	// url and httpClient can be removed if we don't support replicate chartmuseum charts anymore
-	url        string
 	httpClient *common_http.Client
 }
 
@@ -114,14 +111,8 @@ func (a *Adapter) Info() (*model.RegistryInfo, error) {
 			model.TriggerTypeManual,
 			model.TriggerTypeScheduled,
 		},
-	}
-
-	enabled, err := a.Client.ChartRegistryEnabled()
-	if err != nil {
-		return nil, err
-	}
-	if enabled {
-		info.SupportedResourceTypes = append(info.SupportedResourceTypes, model.ResourceTypeChart)
+		SupportedRepositoryPathComponentType: model.RepositoryPathComponentTypeAtLeastTwo,
+		SupportedCopyByChunk:                 true,
 	}
 
 	labels, err := a.Client.ListLabels()
@@ -168,7 +159,37 @@ func (a *Adapter) PrepareForPush(resources []*model.Resource) error {
 			Metadata: metadata,
 		}
 	}
-	for _, project := range projects {
+
+	var ps []string
+	for p := range projects {
+		ps = append(ps, p)
+	}
+	// query by project name, decorate the name as string to avoid parsed as int by server in case of pure numbers as project name
+	q := fmt.Sprintf("name={'%s'}", strings.Join(ps, " "))
+	// get exist projects
+	queryProjects, err := a.Client.ListProjectsWithQuery(q, false)
+	if err != nil {
+		return errors.Wrapf(err, "list projects with query %s", q)
+	}
+
+	proxyCacheProjects := make(map[string]bool)
+	existProjects := make(map[string]bool)
+	for _, p := range queryProjects {
+		existProjects[p.Name] = true
+		// if project with registry_id, that means this is a proxy cache project.
+		if p.RegistryID > 0 {
+			proxyCacheProjects[p.Name] = true
+		}
+	}
+
+	var notExistProjects []*Project
+	for _, p := range projects {
+		if !existProjects[p.Name] {
+			notExistProjects = append(notExistProjects, p)
+		}
+	}
+
+	for _, project := range notExistProjects {
 		if err := a.Client.CreateProject(project.Name, project.Metadata); err != nil {
 			if httpErr, ok := err.(*common_http.Error); ok && httpErr.Code == http.StatusConflict {
 				log.Debugf("got 409 when trying to create project %s", project.Name)
@@ -178,6 +199,17 @@ func (a *Adapter) PrepareForPush(resources []*model.Resource) error {
 		}
 		log.Debugf("project %s created", project.Name)
 	}
+
+	// do filter for proxy cache projects.
+	for _, res := range resources {
+		paths := strings.Split(res.Metadata.Repository.Name, "/")
+		projectName := paths[0]
+		if proxyCacheProjects[projectName] {
+			// set resource skip flag to true if it's a proxy cache project.
+			res.Skip = true
+		}
+	}
+
 	return nil
 }
 
@@ -197,6 +229,8 @@ func (a *Adapter) ListProjects(filters []*model.Filter) ([]*Project, error) {
 		names, ok := util.IsSpecificPathComponent(projectPattern)
 		if ok {
 			for _, name := range names {
+				// trim white space in project name
+				name = strings.TrimSpace(name)
 				project, err := a.Client.GetProject(name)
 				if err != nil {
 					return nil, err
@@ -266,9 +300,10 @@ func parsePublic(metadata map[string]interface{}) bool {
 
 // Project model
 type Project struct {
-	ID       int64                  `json:"project_id"`
-	Name     string                 `json:"name"`
-	Metadata map[string]interface{} `json:"metadata"`
+	ID         int64                  `json:"project_id"`
+	Name       string                 `json:"name"`
+	Metadata   map[string]interface{} `json:"metadata"`
+	RegistryID int64                  `json:"registry_id"`
 }
 
 func isLocalHarbor(url string) bool {

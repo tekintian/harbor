@@ -38,7 +38,7 @@ func Build(q, sort string, pageNumber, pageSize int64) (*Query, error) {
 	if err != nil {
 		return nil, err
 	}
-	sorts := parseSorting(sort)
+	sorts := ParseSorting(sort)
 	return &Query{
 		Keywords:   keywords,
 		Sorts:      sorts,
@@ -77,7 +77,10 @@ func parseKeywords(q string) (map[string]interface{}, error) {
 	return keywords, nil
 }
 
-func parseSorting(sort string) []*Sort {
+func ParseSorting(sort string) []*Sort {
+	if sort == "" {
+		return []*Sort{}
+	}
 	var sorts []*Sort
 	for _, sorting := range strings.Split(sort, ",") {
 		key := sorting
@@ -150,9 +153,7 @@ func parseOrList(value string) (*OrList, error) {
 		return nil, err
 	}
 	ol := &OrList{}
-	for _, v := range values {
-		ol.Values = append(ol.Values, v)
-	}
+	ol.Values = append(ol.Values, values...)
 	return ol, nil
 }
 
@@ -162,9 +163,7 @@ func parseAndList(value string) (*AndList, error) {
 		return nil, err
 	}
 	al := &AndList{}
-	for _, v := range values {
-		al.Values = append(al.Values, v)
-	}
+	al.Values = append(al.Values, values...)
 	return al, nil
 }
 

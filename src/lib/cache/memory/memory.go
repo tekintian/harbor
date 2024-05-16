@@ -15,12 +15,15 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/goharbor/harbor/src/lib/cache"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 type entry struct {
@@ -41,14 +44,15 @@ type Cache struct {
 }
 
 // Contains returns true if key exists
-func (c *Cache) Contains(key string) bool {
+func (c *Cache) Contains(ctx context.Context, key string) bool {
 	e, ok := c.storage.Load(c.opts.Key(key))
 	if !ok {
 		return false
 	}
 
 	if e.(*entry).isExpirated() {
-		c.Delete(c.opts.Key(key))
+		err := c.Delete(ctx, c.opts.Key(key))
+		log.Errorf("failed to delete cache in Contains() method when it's expired, error: %v", err)
 		return false
 	}
 
@@ -56,13 +60,13 @@ func (c *Cache) Contains(key string) bool {
 }
 
 // Delete delete item from cache by key
-func (c *Cache) Delete(key string) error {
+func (c *Cache) Delete(_ context.Context, key string) error {
 	c.storage.Delete(c.opts.Key(key))
 	return nil
 }
 
 // Fetch retrieve the cached key value
-func (c *Cache) Fetch(key string, value interface{}) error {
+func (c *Cache) Fetch(ctx context.Context, key string, value interface{}) error {
 	v, ok := c.storage.Load(c.opts.Key(key))
 	if !ok {
 		return cache.ErrNotFound
@@ -70,7 +74,10 @@ func (c *Cache) Fetch(key string, value interface{}) error {
 
 	e := v.(*entry)
 	if e.isExpirated() {
-		c.Delete(c.opts.Key(key))
+		err := c.Delete(ctx, c.opts.Key(key))
+		if err != nil {
+			log.Errorf("failed to delete cache in Fetch() method when it's expired, error: %v", err)
+		}
 		return cache.ErrNotFound
 	}
 
@@ -82,12 +89,12 @@ func (c *Cache) Fetch(key string, value interface{}) error {
 }
 
 // Ping ping the cache
-func (c *Cache) Ping() error {
+func (c *Cache) Ping(_ context.Context) error {
 	return nil
 }
 
 // Save cache the value by key
-func (c *Cache) Save(key string, value interface{}, expiration ...time.Duration) error {
+func (c *Cache) Save(_ context.Context, key string, value interface{}, expiration ...time.Duration) error {
 	data, err := c.opts.Codec.Encode(value)
 	if err != nil {
 		return fmt.Errorf("failed to encode value, key %s, error: %v", key, err)
@@ -110,11 +117,62 @@ func (c *Cache) Save(key string, value interface{}, expiration ...time.Duration)
 	return nil
 }
 
+// Scan scans the keys matched by match string
+func (c *Cache) Scan(_ context.Context, match string) (cache.Iterator, error) {
+	var keys []string
+	c.storage.Range(func(k, v interface{}) bool {
+		matched := true
+		if match != "" {
+			matched = strings.Contains(k.(string), match)
+		}
+
+		if matched {
+			if v.(*entry).isExpirated() {
+				c.storage.Delete(k)
+			} else {
+				keys = append(keys, strings.TrimPrefix(k.(string), c.opts.Prefix))
+			}
+		}
+		return true
+	})
+
+	return &ScanIterator{keys: keys}, nil
+}
+
+// ScanIterator is a ScanIterator for memory cache
+type ScanIterator struct {
+	mu   sync.Mutex
+	pos  int
+	keys []string
+}
+
+// Next checks whether has the next element
+func (i *ScanIterator) Next(_ context.Context) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.pos++
+	return i.pos <= len(i.keys)
+}
+
+// Val returns the key
+func (i *ScanIterator) Val() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	var val string
+	if i.pos <= len(i.keys) {
+		val = i.keys[i.pos-1]
+	}
+
+	return val
+}
+
 // New returns memory cache
 func New(opts cache.Options) (cache.Cache, error) {
 	return &Cache{opts: &opts}, nil
 }
 
 func init() {
-	cache.Register("memory", New)
+	cache.Register(cache.Memory, New)
 }

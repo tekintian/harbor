@@ -23,11 +23,6 @@ import (
 	"github.com/goharbor/harbor/src/pkg/project/metadata/models"
 )
 
-var (
-	// Mgr is the global project metadata manager
-	Mgr = New()
-)
-
 // Manager defines the operations that a project metadata manager should implement
 type Manager interface {
 	// Add metadatas for project specified by projectID
@@ -65,7 +60,7 @@ func (m *manager) Add(ctx context.Context, projectID int64, meta map[string]stri
 		}
 		return nil
 	}
-	return orm.WithTransaction(h)(ctx)
+	return orm.WithTransaction(h)(orm.SetTransactionOpNameToContext(ctx, "tx-add-project"))
 }
 
 // Delete metadatas whose keys are specified in parameter meta, if it is absent, delete all
@@ -89,7 +84,7 @@ func (m *manager) Update(ctx context.Context, projectID int64, meta map[string]s
 		return nil
 	}
 
-	return orm.WithTransaction(h)(ctx)
+	return orm.WithTransaction(h)(orm.SetTransactionOpNameToContext(ctx, "tx-delete-project"))
 }
 
 // Get metadatas whose keys are specified in parameter meta, if it is absent, get all
@@ -118,9 +113,7 @@ func makeQuery(projectID int64, meta ...string) *q.Query {
 	}
 	if len(meta) > 0 {
 		var names []string
-		for _, name := range meta {
-			names = append(names, name)
-		}
+		names = append(names, meta...)
 		kw["name__in"] = names
 	}
 

@@ -18,12 +18,14 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/graph-gophers/dataloader"
+
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
-	"github.com/goharbor/harbor/src/pkg/project"
+	"github.com/goharbor/harbor/src/pkg"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/user"
-	"github.com/graph-gophers/dataloader"
 )
 
 func getProjectsBatchFn(ctx context.Context, keys dataloader.Keys) []*dataloader.Result {
@@ -44,13 +46,13 @@ func getProjectsBatchFn(ctx context.Context, keys dataloader.Keys) []*dataloader
 		projectIDs = append(projectIDs, id)
 	}
 
-	projects, err := project.Mgr.List(ctx, q.New(q.KeyWords{"project_id__in": projectIDs}))
+	projects, err := pkg.ProjectMgr.List(ctx, q.New(q.KeyWords{"project_id__in": projectIDs}))
 	if err != nil {
 		return handleError(err)
 	}
 
 	var ownerIDs []interface{}
-	var projectsMap = make(map[int64]*models.Project, len(projectIDs))
+	var projectsMap = make(map[int64]*proModels.Project, len(projectIDs))
 	for _, project := range projects {
 		ownerIDs = append(ownerIDs, project.OwnerID)
 		projectsMap[project.ProjectID] = project

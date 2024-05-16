@@ -18,26 +18,22 @@ Library  OperatingSystem
 Library  Process
 
 *** Keywords ***
-Prepare Helm Plugin
-    Wait Unitl Command Success  helm init --stable-repo-url https://charts.helm.sh/stable --client-only
-    Wait Unitl Command Success  helm plugin install https://github.com/chartmuseum/helm-push
-    Wait Unitl Command Success  helm3 plugin install https://github.com/chartmuseum/helm-push
+Helm Registry Login
+    [Arguments]  ${ip}  ${user}  ${password}
+    Wait Unitl Command Success  helm registry login ${ip} -u ${user} -p ${password} --insecure
 
-Helm Repo Add
-    [Arguments]  ${harbor_url}  ${user}  ${pwd}  ${project_name}=library  ${helm_repo_name}=myrepo
-    ${rc}  ${output}=  Run And Return Rc And Output  helm repo remove ${project_name}
-    Log To Console  ${output}
-    Wait Unitl Command Success  helm repo add --ca-file /ca/ca.crt --username=${user} --password=${pwd} ${helm_repo_name} ${harbor_url}/chartrepo/${project_name}
+Helm Package
+    [Arguments]  ${file_path}
+    Wait Unitl Command Success  helm package ${file_path}
 
-Helm Repo Push
-    [Arguments]  ${user}  ${pwd}  ${chart_filename}  ${helm_repo_name}=myrepo  ${helm_cmd}=helm
-    ${current_dir}=  Run  pwd
-    Run  cd ${current_dir}
-    Run  wget ${harbor_chart_file_url}
-    Wait Unitl Command Success  ${helm_cmd} push --ca-file=/ca/ca.crt --username=${user} --password=${pwd} ${chart_filename} ${helm_repo_name}
+Helm Push
+    [Arguments]  ${file_path}  ${ip}  ${repo_name}
+    Wait Unitl Command Success  helm push ${file_path} oci://${ip}/${repo_name} --insecure-skip-tls-verify
 
-Helm Chart Push
-    [Arguments]  ${ip}  ${user}  ${pwd}  ${chart_file}  ${archive}  ${project}  ${repo_name}  ${verion}
-    ${rc}  ${output}=  Run And Return Rc And Output  ./tests/robot-cases/Group0-Util/helm_push_chart.sh ${ip} ${user} ${pwd} ${chart_file} ${archive} ${project} ${repo_name} ${verion}
-    Log  ${output}
-    Should Be Equal As Integers  ${rc}  0
+Helm Pull
+    [Arguments]  ${ip}  ${repo_name}  ${version}
+    Wait Unitl Command Success  helm pull oci://${ip}/${repo_name}/harbor --version ${version} --insecure-skip-tls-verify
+
+Helm Registry Logout
+    [Arguments]  ${ip}
+    Wait Unitl Command Success  helm registry logout ${ip}

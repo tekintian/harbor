@@ -15,12 +15,21 @@
 package security
 
 import (
-	"github.com/goharbor/harbor/src/common/security"
+	"net/http"
+	"os"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"testing"
+
+	"github.com/goharbor/harbor/src/common/security"
+	"github.com/goharbor/harbor/src/common/utils/test"
 )
+
+func TestMain(m *testing.M) {
+	test.InitDatabaseFromEnv()
+	os.Exit(m.Run())
+}
 
 func TestSecurity(t *testing.T) {
 	var ctx security.Context

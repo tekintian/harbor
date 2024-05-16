@@ -17,8 +17,13 @@ package requestid
 import (
 	"net/http"
 
-	"github.com/goharbor/harbor/src/server/middleware"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"github.com/goharbor/harbor/src/lib"
+	tracelib "github.com/goharbor/harbor/src/lib/trace"
+	"github.com/goharbor/harbor/src/server/middleware"
 )
 
 // HeaderXRequestID X-Request-ID header
@@ -32,8 +37,12 @@ func Middleware(skippers ...middleware.Skipper) func(http.Handler) http.Handler 
 			rid = uuid.New().String()
 			r.Header.Set(HeaderXRequestID, rid)
 		}
-
 		w.Header().Set(HeaderXRequestID, rid)
-		next.ServeHTTP(w, r)
+		if tracelib.Enabled() {
+			oteltrace.SpanFromContext(r.Context()).SetAttributes(attribute.Key(HeaderXRequestID).String(rid))
+		}
+		// also set the request id to context
+		ctx := lib.WithXRequestID(r.Context(), rid)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}, skippers...)
 }

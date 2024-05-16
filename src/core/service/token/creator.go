@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,15 +17,15 @@ package token
 import (
 	"context"
 	"fmt"
-	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
-	"github.com/goharbor/harbor/src/lib/config"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/docker/distribution/registry/auth/token"
+
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/common/rbac"
+	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"github.com/goharbor/harbor/src/common/security"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib/errors"
@@ -34,7 +34,6 @@ import (
 
 var creatorMap map[string]Creator
 var registryFilterMap map[string]accessFilter
-var notaryFilterMap map[string]accessFilter
 var actionScopeMap = map[rbac.Action]string{
 	// Scopes checked by distribution, see: https://github.com/docker/distribution/blob/master/registry/handlers/app.go
 	rbac.ActionPull:   "pull",
@@ -45,8 +44,6 @@ var actionScopeMap = map[rbac.Action]string{
 }
 
 const (
-	// Notary service
-	Notary = "harbor-notary"
 	// Registry service
 	Registry = "harbor-registry"
 )
@@ -60,23 +57,6 @@ func InitCreators() {
 		},
 		"registry": &registryFilter{},
 	}
-	ext, err := config.ExtURL()
-	if err != nil {
-		log.Warningf("Failed to get ext url, err: %v, the token service will not be functional with notary requests", err)
-	} else {
-		notaryFilterMap = map[string]accessFilter{
-			"repository": &repositoryFilter{
-				parser: &endpointParser{
-					endpoint: ext,
-				},
-			},
-		}
-		creatorMap[Notary] = &generalCreator{
-			service:   Notary,
-			filterMap: notaryFilterMap,
-		}
-	}
-
 	creatorMap[Registry] = &generalCreator{
 		service:   Registry,
 		filterMap: registryFilterMap,
@@ -111,10 +91,10 @@ type endpointParser struct {
 func (e endpointParser) parse(s string) (*image, error) {
 	repo := strings.SplitN(s, "/", 2)
 	if len(repo) < 2 {
-		return nil, fmt.Errorf("Unable to parse image from string: %s", s)
+		return nil, fmt.Errorf("unable to parse image from string: %s", s)
 	}
 	if repo[0] != e.endpoint {
-		return nil, fmt.Errorf("Mismatch endpoint from string: %s, expected endpoint: %s", s, e.endpoint)
+		return nil, fmt.Errorf("mismatch endpoint from string: %s, expected endpoint: %s", s, e.endpoint)
 	}
 	return parseImg(repo[1])
 }
@@ -123,7 +103,7 @@ func (e endpointParser) parse(s string) (*image, error) {
 func parseImg(s string) (*image, error) {
 	repo := strings.SplitN(s, "/", 2)
 	if len(repo) < 2 {
-		return nil, fmt.Errorf("Unable to parse image from string: %s", s)
+		return nil, fmt.Errorf("unable to parse image from string: %s", s)
 	}
 	i := strings.SplitN(repo[1], ":", 2)
 	res := &image{
@@ -144,11 +124,11 @@ type accessFilter interface {
 type registryFilter struct {
 }
 
-func (reg registryFilter) filter(ctx context.Context, ctl project.Controller,
+func (reg registryFilter) filter(ctx context.Context, _ project.Controller,
 	a *token.ResourceActions) error {
 	// Do not filter if the request is to access registry catalog
 	if a.Name != "catalog" {
-		return fmt.Errorf("Unable to handle, type: %s, name: %s", a.Type, a.Name)
+		return fmt.Errorf("unable to handle, type: %s, name: %s", a.Type, a.Name)
 	}
 
 	secCtx, ok := security.FromContext(ctx)
@@ -201,15 +181,6 @@ func resourceScopes(ctx context.Context, rc rbac.Resource) map[string]struct{} {
 		}
 	}
 
-	// "*" is needed in the token for some API in notary server
-	// see https://github.com/goharbor/harbor/issues/14303#issuecomment-788010900
-	// and https://github.com/theupdateframework/notary/blob/84287fd8df4f172c9a8289641cdfa355fc86989d/server/server.go#L200
-	_, ok1 := res["push"]
-	_, ok2 := res["pull"]
-	_, ok3 := res["delete"]
-	if ok1 && ok2 && ok3 {
-		res["*"] = struct{}{}
-	}
 	return res
 }
 

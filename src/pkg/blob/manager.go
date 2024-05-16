@@ -16,6 +16,7 @@ package blob
 
 import (
 	"context"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/blob/dao"
@@ -53,8 +54,14 @@ type Manager interface {
 	// CleanupAssociationsForProject remove unneeded associations between blobs and project
 	CleanupAssociationsForProject(ctx context.Context, projectID int64, blobs []*Blob) error
 
+	// FindBlobsShouldUnassociatedWithProject filter the blobs which should not be associated with the project
+	FindBlobsShouldUnassociatedWithProject(ctx context.Context, projectID int64, blobs []*models.Blob) ([]*models.Blob, error)
+
 	// Get get blob by digest
 	Get(ctx context.Context, digest string) (*Blob, error)
+
+	// Get get blob by artifact digest
+	GetByArt(ctx context.Context, digest string) ([]*models.Blob, error)
 
 	// Update the blob
 	Update(ctx context.Context, blob *Blob) error
@@ -114,8 +121,16 @@ func (m *manager) CleanupAssociationsForProject(ctx context.Context, projectID i
 	return m.dao.DeleteProjectBlob(ctx, projectID, blobIDs...)
 }
 
+func (m *manager) FindBlobsShouldUnassociatedWithProject(ctx context.Context, projectID int64, blobs []*models.Blob) ([]*models.Blob, error) {
+	return m.dao.FindBlobsShouldUnassociatedWithProject(ctx, projectID, blobs)
+}
+
 func (m *manager) Get(ctx context.Context, digest string) (*Blob, error) {
 	return m.dao.GetBlobByDigest(ctx, digest)
+}
+
+func (m *manager) GetByArt(ctx context.Context, digest string) ([]*models.Blob, error) {
+	return m.dao.GetBlobsByArtDigest(ctx, digest)
 }
 
 func (m *manager) Update(ctx context.Context, blob *Blob) error {

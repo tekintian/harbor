@@ -15,9 +15,10 @@
 package filter
 
 import (
+	"strings"
+
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/pkg/reg/util"
-	"strings"
 )
 
 // DoFilterArtifacts filter the artifacts according to the filters
@@ -37,18 +38,13 @@ func BuildArtifactFilters(filters []*model.Filter) (ArtifactFilters, error) {
 		switch filter.Type {
 		case model.FilterTypeLabel:
 			f = &artifactLabelFilter{
-				labels: filter.Value.([]string),
+				labels:     filter.Value.([]string),
+				decoration: filter.Decoration,
 			}
 		case model.FilterTypeTag:
 			f = &artifactTagFilter{
-				pattern: filter.Value.(string),
-			}
-		case model.FilterTypeResource:
-			v := filter.Value.(string)
-			if v != model.ResourceTypeArtifact && v != model.ResourceTypeChart {
-				f = &artifactTypeFilter{
-					types: []string{string(v)},
-				}
+				pattern:    filter.Value.(string),
+				decoration: filter.Decoration,
 			}
 		}
 		if f != nil {
@@ -89,7 +85,7 @@ func (a *artifactTypeFilter) Filter(artifacts []*model.Artifact) ([]*model.Artif
 	var result []*model.Artifact
 	for _, artifact := range artifacts {
 		for _, t := range a.types {
-			if strings.ToLower(artifact.Type) == strings.ToLower(t) {
+			if strings.EqualFold(strings.ToLower(artifact.Type), strings.ToLower(t)) {
 				result = append(result, artifact)
 				continue
 			}
@@ -102,6 +98,8 @@ func (a *artifactTypeFilter) Filter(artifacts []*model.Artifact) ([]*model.Artif
 // in the filter is the valid one
 type artifactLabelFilter struct {
 	labels []string
+	// "matches", "excludes"
+	decoration string
 }
 
 func (a *artifactLabelFilter) Filter(artifacts []*model.Artifact) ([]*model.Artifact, error) {
@@ -122,8 +120,14 @@ func (a *artifactLabelFilter) Filter(artifacts []*model.Artifact) ([]*model.Arti
 			}
 		}
 		// add the artifact to the result list if it contains all labels defined for the filter
-		if match {
-			result = append(result, artifact)
+		if a.decoration == model.Excludes {
+			if !match {
+				result = append(result, artifact)
+			}
+		} else {
+			if match {
+				result = append(result, artifact)
+			}
 		}
 	}
 	return result, nil
@@ -147,6 +151,8 @@ func (a *artifactTaggedFilter) Filter(artifacts []*model.Artifact) ([]*model.Art
 
 type artifactTagFilter struct {
 	pattern string
+	// "matches", "excludes"
+	decoration string
 }
 
 func (a *artifactTagFilter) Filter(artifacts []*model.Artifact) ([]*model.Artifact, error) {
@@ -155,40 +161,69 @@ func (a *artifactTagFilter) Filter(artifacts []*model.Artifact) ([]*model.Artifa
 	}
 	var result []*model.Artifact
 	for _, artifact := range artifacts {
+		// for individual artifact, use its own tags to match, reserve the matched tags.
+		// for accessory artifact, use the parent tags to match,
+		var tagsForMatching []string
+		if artifact.IsAcc {
+			tagsForMatching = append(tagsForMatching, artifact.ParentTags...)
+		} else {
+			tagsForMatching = append(tagsForMatching, artifact.Tags...)
+		}
+
 		// untagged artifact
-		if len(artifact.Tags) == 0 {
+		if len(tagsForMatching) == 0 {
 			match, err := util.Match(a.pattern, "")
 			if err != nil {
 				return nil, err
 			}
-			if match {
-				result = append(result, artifact)
+			if a.decoration == model.Excludes {
+				if !match {
+					result = append(result, artifact)
+				}
+			} else {
+				if match {
+					result = append(result, artifact)
+				}
 			}
 			continue
 		}
 
 		// tagged artifact
 		var tags []string
-		for _, tag := range artifact.Tags {
+		for _, tag := range tagsForMatching {
 			match, err := util.Match(a.pattern, tag)
 			if err != nil {
 				return nil, err
 			}
-			if match {
-				tags = append(tags, tag)
-				continue
+			if a.decoration == model.Excludes {
+				if !match {
+					tags = append(tags, tag)
+				}
+			} else {
+				if match {
+					tags = append(tags, tag)
+				}
 			}
 		}
 		if len(tags) == 0 {
 			continue
 		}
 		// copy a new artifact here to avoid changing the original one
-		result = append(result, &model.Artifact{
-			Type:   artifact.Type,
-			Digest: artifact.Digest,
-			Labels: artifact.Labels,
-			Tags:   tags,
-		})
+		if artifact.IsAcc {
+			result = append(result, &model.Artifact{
+				Type:   artifact.Type,
+				Digest: artifact.Digest,
+				Labels: artifact.Labels,
+				Tags:   artifact.Tags, // use its own tags to replicate
+			})
+		} else {
+			result = append(result, &model.Artifact{
+				Type:   artifact.Type,
+				Digest: artifact.Digest,
+				Labels: artifact.Labels,
+				Tags:   tags, // only replicate the matched tags
+			})
+		}
 	}
 	return result, nil
 }

@@ -3,19 +3,20 @@ package tencentcr
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common/errors"
+	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
 
 	"github.com/goharbor/harbor/src/common/utils/test"
 	"github.com/goharbor/harbor/src/lib/log"
 	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter/native"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/stretchr/testify/assert"
-	tcr "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/tcr/v20190924"
 )
 
 var (
@@ -25,6 +26,8 @@ var (
 )
 
 func setup() {
+	os.Setenv("UTTEST", "true")
+
 	if ak := os.Getenv("TENCENT_AK"); ak != "" {
 		log.Info("USE AK from ENV")
 		mockAccessKey = ak
@@ -69,6 +72,10 @@ func TestAdapter_NewAdapter_NilAKSK(t *testing.T) {
 }
 
 func TestAdapter_NewAdapter_InvalidEndpoint(t *testing.T) {
+	res := os.Getenv("UTTEST")
+	os.Unsetenv("UTTEST")
+	defer os.Setenv("UTTEST", res)
+
 	// Invaild endpoint
 	adapter, err := newAdapter(&model.Registry{
 		Type: model.RegistryTypeTencentTcr,
@@ -110,41 +117,62 @@ func TestAdapter_NewAdapter_InvalidAKSK(t *testing.T) {
 	assert.Nil(t, adapter)
 }
 
-// func TestAdapter_NewAdapter_Ok(t *testing.T) {
-// 	adapter, err := newAdapter(&model.Registry{
-// 		Type: model.RegistryTypeTencentTcr,
-// 		Credential: &model.Credential{
-// 			AccessKey:    mockAccessKey,
-// 			AccessSecret: mockAccessSecret,
-// 		},
-// 		URL: "https://harbor-community.tencentcloudcr.com",
-// 	})
-// 	if sdkerr, ok := err.(*errors.TencentCloudSDKError); ok {
-// 		log.Infof("sdk error, error=%v", sdkerr)
-// 		return
-// 	}
-// 	assert.NotNil(t, adapter)
-// 	assert.Nil(t, err)
+func getTestServer() *httptest.Server {
+	server := test.NewServer(
+		&test.RequestHandlerMapping{
+			Method:  http.MethodGet,
+			Pattern: "/v2/",
+			Handler: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Add("Www-Authenticate", `Bearer realm="https://harbor-community.tencentcloudcr.com/service/token",service="harbor-registry"`)
+				w.WriteHeader(http.StatusUnauthorized)
+			},
+		},
+	)
 
-// }
+	return server
+}
 
-// func TestAdapter_NewAdapter_InsecureOk(t *testing.T) {
-// 	adapter, err := newAdapter(&model.Registry{
-// 		Type: model.RegistryTypeTencentTcr,
-// 		Credential: &model.Credential{
-// 			AccessKey:    mockAccessKey,
-// 			AccessSecret: mockAccessSecret,
-// 		},
-// 		Insecure: true,
-// 		URL:      "https://harbor-community.tencentcloudcr.com",
-// 	})
-// 	if sdkerr, ok := err.(*errors.TencentCloudSDKError); ok {
-// 		log.Infof("sdk error, error=%v", sdkerr)
-// 		return
-// 	}
-// 	assert.NotNil(t, adapter)
-// 	assert.Nil(t, err)
-// }
+func TestAdapter_NewAdapter_Ok(t *testing.T) {
+	server := getTestServer()
+	defer server.Close()
+
+	adapter, err := newAdapter(&model.Registry{
+		Type: model.RegistryTypeTencentTcr,
+		Credential: &model.Credential{
+			AccessKey:    mockAccessKey,
+			AccessSecret: mockAccessSecret,
+		},
+		URL: server.URL,
+	})
+	if sdkerr, ok := err.(*errors.TencentCloudSDKError); ok {
+		log.Infof("sdk error, error=%v", sdkerr)
+		return
+	}
+	assert.NotNil(t, adapter)
+	assert.Nil(t, err)
+
+}
+
+func TestAdapter_NewAdapter_InsecureOk(t *testing.T) {
+	server := getTestServer()
+	defer server.Close()
+
+	adapter, err := newAdapter(&model.Registry{
+		Type: model.RegistryTypeTencentTcr,
+		Credential: &model.Credential{
+			AccessKey:    mockAccessKey,
+			AccessSecret: mockAccessSecret,
+		},
+		Insecure: true,
+		URL:      server.URL,
+	})
+	if sdkerr, ok := err.(*errors.TencentCloudSDKError); ok {
+		log.Infof("sdk error, error=%v", sdkerr)
+		return
+	}
+	assert.NotNil(t, adapter)
+	assert.Nil(t, err)
+}
 
 func getMockAdapter(t *testing.T, hasCred, health bool) (*adapter, *httptest.Server) {
 	server := test.NewServer(
@@ -200,7 +228,7 @@ func getMockAdapter(t *testing.T, hasCred, health bool) (*adapter, *httptest.Ser
 			Pattern: "/",
 			Handler: func(w http.ResponseWriter, r *http.Request) {
 				fmt.Println(r.Method, r.URL)
-				if buf, e := ioutil.ReadAll(&io.LimitedReader{R: r.Body, N: 80}); e == nil {
+				if buf, e := io.ReadAll(&io.LimitedReader{R: r.Body, N: 80}); e == nil {
 					fmt.Println("\t", string(buf))
 				}
 				w.WriteHeader(http.StatusOK)

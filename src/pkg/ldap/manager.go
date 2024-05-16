@@ -1,9 +1,25 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package ldap
 
 import (
 	"context"
 	"fmt"
+
 	goldap "github.com/go-ldap/ldap/v3"
+
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/core/auth"
 	cfgModels "github.com/goharbor/harbor/src/lib/config/models"
@@ -33,11 +49,11 @@ func New() Manager {
 type manager struct {
 }
 
-func (m *manager) Ping(ctx context.Context, cfg cfgModels.LdapConf) (bool, error) {
+func (m *manager) Ping(_ context.Context, cfg cfgModels.LdapConf) (bool, error) {
 	return TestConfig(cfg)
 }
 
-func (m *manager) SearchUser(ctx context.Context, sess *Session, username string) ([]model.User, error) {
+func (m *manager) SearchUser(_ context.Context, sess *Session, username string) ([]model.User, error) {
 	users := make([]model.User, 0)
 	if err := sess.Open(); err != nil {
 		return users, err
@@ -104,7 +120,7 @@ func (m *manager) ImportUser(ctx context.Context, sess *Session, ldapImportUsers
 		user.Username = ldapUsers[0].Username
 		user.Realname = ldapUsers[0].Realname
 		user.Email = ldapUsers[0].Email
-		err = auth.OnBoardUser(&user)
+		err = auth.OnBoardUser(ctx, &user)
 
 		if err != nil || user.UserID <= 0 {
 			u.UID = tempUID
@@ -112,13 +128,12 @@ func (m *manager) ImportUser(ctx context.Context, sess *Session, ldapImportUsers
 			failedImportUser = append(failedImportUser, u)
 			log.Errorf("Can't import user %s, error: %s", tempUID, u.Error)
 		}
-
 	}
 
 	return failedImportUser, nil
 }
 
-func (m *manager) SearchGroup(ctx context.Context, sess *Session, groupName, groupDN string) ([]model.Group, error) {
+func (m *manager) SearchGroup(_ context.Context, sess *Session, groupName, groupDN string) ([]model.Group, error) {
 	err := sess.Open()
 	if err != nil {
 		return nil, err

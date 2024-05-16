@@ -1,8 +1,31 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package authproxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+
+	k8s_api_v1beta1 "k8s.io/api/authentication/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/models"
 	cfgModels "github.com/goharbor/harbor/src/lib/config/models"
@@ -10,17 +33,10 @@ import (
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/pkg/usergroup"
 	"github.com/goharbor/harbor/src/pkg/usergroup/model"
-	k8s_api_v1beta1 "k8s.io/api/authentication/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
 )
 
 // TokenReview ...
 func TokenReview(rawToken string, authProxyConfig *cfgModels.HTTPAuthProxy) (k8s_api_v1beta1.TokenReviewStatus, error) {
-
 	emptyStatus := k8s_api_v1beta1.TokenReviewStatus{}
 	// Init auth client with the auth proxy endpoint.
 	authClientCfg := &rest.Config{
@@ -46,7 +62,7 @@ func TokenReview(rawToken string, authProxyConfig *cfgModels.HTTPAuthProxy) (k8s
 			Token: rawToken,
 		},
 	}
-	res := authClient.Post().Body(tokenReviewRequest).Do()
+	res := authClient.Post().Body(tokenReviewRequest).Do(context.Background())
 	err = res.Error()
 	if err != nil {
 		log.Errorf("fail to POST auth request, %v", err)
@@ -65,7 +81,6 @@ func TokenReview(rawToken string, authProxyConfig *cfgModels.HTTPAuthProxy) (k8s
 		return emptyStatus, err
 	}
 	return tokenReviewResponse.Status, nil
-
 }
 
 func getTLSConfig(config *cfgModels.HTTPAuthProxy) rest.TLSClientConfig {

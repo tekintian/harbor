@@ -1,40 +1,41 @@
-//  Copyright Project Harbor Authors
+// Copyright Project Harbor Authors
 //
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//    http://www.apache.org/licenses/LICENSE-2.0
 //
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package proxy
 
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/controller/tag"
 	"io"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/docker/distribution"
-	"github.com/docker/distribution/manifest/manifestlist"
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/opencontainers/go-digest"
+
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/blob"
 	"github.com/goharbor/harbor/src/controller/event/operator"
+	"github.com/goharbor/harbor/src/controller/tag"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/cache"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
-	"github.com/opencontainers/go-digest"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	model_tag "github.com/goharbor/harbor/src/pkg/tag/model/tag"
 )
 
 const (
@@ -60,7 +61,7 @@ type Controller interface {
 	UseLocalManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (bool, *ManifestList, error)
 	// ProxyBlob proxy the blob request to the remote server, p is the proxy project
 	// art is the ArtifactInfo which includes the digest of the blob
-	ProxyBlob(ctx context.Context, p *models.Project, art lib.ArtifactInfo) (int64, io.ReadCloser, error)
+	ProxyBlob(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo) (int64, io.ReadCloser, error)
 	// ProxyManifest proxy the manifest request to the remote server, p is the proxy project,
 	// art is the ArtifactInfo which includes the tag or digest of the manifest
 	ProxyManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (distribution.Manifest, error)
@@ -69,6 +70,7 @@ type Controller interface {
 	// EnsureTag ensure tag for digest
 	EnsureTag(ctx context.Context, art lib.ArtifactInfo, tagName string) error
 }
+
 type controller struct {
 	blobCtl         blob.Controller
 	artifactCtl     artifact.Controller
@@ -98,8 +100,8 @@ func ControllerInstance() Controller {
 func (c *controller) EnsureTag(ctx context.Context, art lib.ArtifactInfo, tagName string) error {
 	// search the digest in cache and query with trimmed digest
 	var trimmedDigest string
-	err := c.cache.Fetch(TrimmedManifestlist+art.Digest, &trimmedDigest)
-	if err == cache.ErrNotFound {
+	err := c.cache.Fetch(ctx, TrimmedManifestlist+art.Digest, &trimmedDigest)
+	if errors.Is(err, cache.ErrNotFound) { // nolint:revive
 		// skip to update digest, continue
 	} else if err != nil {
 		// for other error, return
@@ -116,7 +118,17 @@ func (c *controller) EnsureTag(ctx context.Context, art lib.ArtifactInfo, tagNam
 	if a == nil {
 		return fmt.Errorf("the artifact is not ready yet, failed to tag it to %v", tagName)
 	}
-	return tag.Ctl.Ensure(ctx, a.RepositoryID, a.Artifact.ID, tagName)
+	tagID, err := tag.Ctl.Ensure(ctx, a.RepositoryID, a.Artifact.ID, tagName)
+	if err != nil {
+		return err
+	}
+	// update the pull time of tag for the first time cache
+	return tag.Ctl.Update(ctx, &tag.Tag{
+		Tag: model_tag.Tag{
+			ID:       tagID,
+			PullTime: time.Now(),
+		},
+	}, "PullTime")
 }
 
 func (c *controller) UseLocalBlob(ctx context.Context, art lib.ArtifactInfo) bool {
@@ -137,6 +149,10 @@ type ManifestList struct {
 	ContentType string
 }
 
+// UseLocalManifest check if these manifest could be found in local registry,
+// the return error should be nil when it is not found in local and need to delegate to remote registry
+// the return error should be NotFoundError when it is not found in remote registry
+// the error will be captured by framework and return 404 to client
 func (c *controller) UseLocalManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (bool, *ManifestList, error) {
 	a, err := c.local.GetManifest(ctx, art)
 	if err != nil {
@@ -150,6 +166,9 @@ func (c *controller) UseLocalManifest(ctx context.Context, art lib.ArtifactInfo,
 	remoteRepo := getRemoteRepo(art)
 	exist, desc, err := remote.ManifestExist(remoteRepo, getReference(art)) // HEAD
 	if err != nil {
+		if errors.IsRateLimitError(err) && a != nil { // if rate limit, use local if it exists, otherwise return error
+			return true, nil, nil
+		}
 		return false, nil, err
 	}
 	if !exist || desc == nil {
@@ -160,25 +179,41 @@ func (c *controller) UseLocalManifest(ctx context.Context, art lib.ArtifactInfo,
 	}
 
 	var content []byte
-	if c.cache != nil {
-		err = c.cache.Fetch(getManifestListKey(art.Repository, string(desc.Digest)), &content)
-		if err == nil {
-			log.Debugf("Get the manifest list with key=cache:%v", getManifestListKey(art.Repository, string(desc.Digest)))
-			return true, &ManifestList{content, string(desc.Digest), manifestlist.MediaTypeManifestList}, nil
-		}
-		if err == cache.ErrNotFound {
-			log.Debugf("Digest is not found in manifest list cache, key=cache:%v", getManifestListKey(art.Repository, string(desc.Digest)))
+	var contentType string
+	if c.cache == nil {
+		return a != nil && string(desc.Digest) == a.Digest, nil, nil // digest matches
+	}
+	// Pass digest to the cache key, digest is more stable than tag, because tag could be updated
+	if len(art.Digest) == 0 {
+		art.Digest = string(desc.Digest)
+	}
+	err = c.cache.Fetch(ctx, manifestListKey(art.Repository, art), &content)
+	if err != nil {
+		if errors.Is(err, cache.ErrNotFound) {
+			log.Debugf("Digest is not found in manifest list cache, key=cache:%v", manifestListKey(art.Repository, art))
 		} else {
 			log.Errorf("Failed to get manifest list from cache, error: %v", err)
 		}
+		return a != nil && string(desc.Digest) == a.Digest, nil, nil
 	}
-	return a != nil && string(desc.Digest) == a.Digest, nil, nil // digest matches
+	err = c.cache.Fetch(ctx, manifestListContentTypeKey(art.Repository, art), &contentType)
+	if err != nil {
+		log.Debugf("failed to get the manifest list content type, not use local. error:%v", err)
+		return false, nil, nil
+	}
+	log.Debugf("Get the manifest list with key=cache:%v", manifestListKey(art.Repository, art))
+	return true, &ManifestList{content, string(desc.Digest), contentType}, nil
 }
 
-func getManifestListKey(repo, dig string) string {
-	// actual redis key format is cache:manifestlist:<repo name>:sha256:xxxx
-	return "manifestlist:" + repo + ":" + dig
+func manifestListKey(repo string, art lib.ArtifactInfo) string {
+	// actual redis key format is cache:manifestlist:<repo name>:<tag> or cache:manifestlist:<repo name>:sha256:xxxx
+	return "manifestlist:" + repo + ":" + getReference(art)
 }
+
+func manifestListContentTypeKey(rep string, art lib.ArtifactInfo) string {
+	return manifestListKey(rep, art) + ":contenttype"
+}
+
 func (c *controller) ProxyManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (distribution.Manifest, error) {
 	var man distribution.Manifest
 	remoteRepo := getRemoteRepo(art)
@@ -199,7 +234,7 @@ func (c *controller) ProxyManifest(ctx context.Context, art lib.ArtifactInfo, re
 
 	// Push manifest in background
 	go func(operator string) {
-		bCtx := orm.Context()
+		bCtx := orm.Copy(ctx)
 		a, err := c.local.GetManifest(bCtx, art)
 		if err != nil {
 			log.Errorf("failed to get manifest, error %v", err)
@@ -210,32 +245,34 @@ func (c *controller) ProxyManifest(ctx context.Context, art lib.ArtifactInfo, re
 			if len(artInfo.Digest) == 0 {
 				artInfo.Digest = dig
 			}
-			c.waitAndPushManifest(ctx, remoteRepo, man, artInfo, ct, remote)
+			c.waitAndPushManifest(bCtx, remoteRepo, man, artInfo, ct, remote)
 		}
 
 		// Query artifact after push
 		if a == nil {
-			a, err = c.local.GetManifest(ctx, art)
+			a, err = c.local.GetManifest(bCtx, art)
 			if err != nil {
 				log.Errorf("failed to get manifest, error %v", err)
 			}
 		}
 		if a != nil {
-			SendPullEvent(a, art.Tag, operator)
+			SendPullEvent(bCtx, a, art.Tag, operator)
 		}
 	}(operator.FromContext(ctx))
 
 	return man, nil
 }
-func (c *controller) HeadManifest(ctx context.Context, art lib.ArtifactInfo, remote RemoteInterface) (bool, *distribution.Descriptor, error) {
+
+func (c *controller) HeadManifest(_ context.Context, art lib.ArtifactInfo, remote RemoteInterface) (bool, *distribution.Descriptor, error) {
 	remoteRepo := getRemoteRepo(art)
 	ref := getReference(art)
 	return remote.ManifestExist(remoteRepo, ref)
 }
-func (c *controller) ProxyBlob(ctx context.Context, p *models.Project, art lib.ArtifactInfo) (int64, io.ReadCloser, error) {
+
+func (c *controller) ProxyBlob(ctx context.Context, p *proModels.Project, art lib.ArtifactInfo) (int64, io.ReadCloser, error) {
 	remoteRepo := getRemoteRepo(art)
 	log.Debugf("The blob doesn't exist, proxy the request to the target server, url:%v", remoteRepo)
-	rHelper, err := NewRemoteHelper(p.RegistryID)
+	rHelper, err := NewRemoteHelper(ctx, p.RegistryID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -275,7 +312,7 @@ func (c *controller) waitAndPushManifest(ctx context.Context, remoteRepo string,
 			return
 		}
 	}
-	h.CacheContent(ctx, remoteRepo, man, art, r)
+	h.CacheContent(ctx, remoteRepo, man, art, r, contType)
 }
 
 // getRemoteRepo get the remote repository name, used in proxy cache
@@ -284,8 +321,8 @@ func getRemoteRepo(art lib.ArtifactInfo) string {
 }
 
 func getReference(art lib.ArtifactInfo) string {
-	if len(art.Tag) > 0 {
-		return art.Tag
+	if len(art.Digest) > 0 {
+		return art.Digest
 	}
-	return art.Digest
+	return art.Tag
 }

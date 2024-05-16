@@ -3,7 +3,7 @@ from __future__ import absolute_import
 import sys
 import unittest
 
-from testutils import ADMIN_CLIENT, CHART_API_CLIENT, TEARDOWN, harbor_server, harbor_url, suppress_urllib3_warning
+from testutils import ADMIN_CLIENT, TEARDOWN, harbor_server, harbor_url, suppress_urllib3_warning
 from testutils import created_user, created_project
 from library.user import User
 from library.project import Project
@@ -15,8 +15,6 @@ from library.repository import push_self_build_image_to_project
 from library.base import _assert_status_code
 from library.scan import Scan
 from library.label import Label
-from library.chart import Chart
-import library.helm
 import base
 import v2_swagger_client
 class TestRobotAccount(unittest.TestCase):
@@ -29,7 +27,6 @@ class TestRobotAccount(unittest.TestCase):
         self.robot = Robot()
         self.scan = Scan()
         self.label = Label()
-        self.chart= Chart()
 
         TestRobotAccount.url = ADMIN_CLIENT["endpoint"]
         TestRobotAccount.user_ra_password = "Aa123456"
@@ -61,8 +58,8 @@ class TestRobotAccount(unittest.TestCase):
 			1. Create user(UA);
 			2. Create private project(PA), private project(PB) and public project(PC) by user(UA);
 			3. Push image(ImagePA) to project(PA), image(ImagePB) to project(PB) and image(ImagePC) to project(PC) by user(UA);
-			4. Create a new robot account(RA) with pull and push privilige in project(PA) by user(UA);
-			5. Check robot account info, it should has both pull and push priviliges;
+			4. Create a new robot account(RA) with pull and push privilege in project(PA) by user(UA);
+			5. Check robot account info, it should has both pull and push privileges;
 			6. Pull image(ImagePA) from project(PA) by robot account(RA), it must be successful;
 			7. Push image(ImageRA) to project(PA) by robot account(RA), it must be successful;
 			8. Push image(ImageRA) to project(PB) by robot account(RA), it must be not successful;
@@ -193,17 +190,14 @@ class TestRobotAccount(unittest.TestCase):
             21. Verify the system robot account has no the corresponding right;
         """
         #1. Define a number of access lists;
-        CHART_FILE_LIST = [dict(name = 'prometheus', version='7.0.2'), dict(name = 'harbor', version='0.2.0')]
-        for i in range(2):
-            base.run_command( ["curl", r"-o", "./tests/apitests/python/{}-{}.tgz".format(CHART_FILE_LIST[i]["name"], CHART_FILE_LIST[i]["version"]), "https://storage.googleapis.com/harbor-builds/helm-chart-test-files/{}-{}.tgz".format(CHART_FILE_LIST[i]["name"], CHART_FILE_LIST[i]["version"])])
 
         # In this priviledge check list, make sure that each of lines and rows must
         #   contains both True and False value.
         check_list = [
-            [True, True, True, True, True, True, False, True, False, True],
-            [False, False, False, False, True, True, False, True, True, False],
-            [True, False, True, False, True, False, True, False, True, True],
-            [False, False, False, True, False, True, False, True, True, False]
+            [True, True, True, False, True, False, True],
+            [False, False, False, False, True, True, False],
+            [True, False, True, True, False, True, True],
+            [False, False, False, False, True, True, False]
         ]
         access_list_list = []
         for i in range(len(check_list)):
@@ -223,7 +217,6 @@ class TestRobotAccount(unittest.TestCase):
         system_robot_account_id, system_robot_account = self.robot.create_system_robot(robot_account_Permissions_list, 300)
         print("system_robot_account:", system_robot_account)
         SYSTEM_RA_CLIENT = dict(endpoint = TestRobotAccount.url, username = system_robot_account.name, password = system_robot_account.secret)
-        SYSTEM_RA_CHART_CLIENT = dict(endpoint = CHART_API_CLIENT["endpoint"], username = SYSTEM_RA_CLIENT["username"], password = SYSTEM_RA_CLIENT["password"])
 
         #4. Verify the system robot account has all the corresponding rights;
         for project_access in project_access_list:
@@ -245,31 +238,14 @@ class TestRobotAccount(unittest.TestCase):
             else:
                 self.artifact.delete_artifact(project_access["project_name"], repo_name.split('/')[1], tag_for_del, expect_status_code = 403, **SYSTEM_RA_CLIENT)
 
-            #Prepare for chart read and delete
-            self.chart.upload_chart(project_access["project_name"], r'./tests/apitests/python/{}-{}.tgz'.format(CHART_FILE_LIST[1]["name"], CHART_FILE_LIST[1]["version"]), **CHART_API_CLIENT)
-            if project_access["check_list"][3]:    #---helm-chart:read---
-                library.helm.helm2_fetch_chart_file("chart_repo_" + base._random_name("repo"), harbor_url, project_access["project_name"], SYSTEM_RA_CLIENT["username"], SYSTEM_RA_CLIENT["password"], CHART_FILE_LIST[1]["name"])
-            else:
-                library.helm.helm2_fetch_chart_file("chart_repo_" + base._random_name("repo"), harbor_url, project_access["project_name"], SYSTEM_RA_CLIENT["username"], SYSTEM_RA_CLIENT["password"], CHART_FILE_LIST[1]["name"], expected_add_repo_error_message = "403 Forbidden")
-
-            if project_access["check_list"][4]:    #---helm-chart-version:create---
-                self.chart.upload_chart(project_access["project_name"], r'./tests/apitests/python/{}-{}.tgz'.format(CHART_FILE_LIST[0]["name"], CHART_FILE_LIST[0]["version"]), **SYSTEM_RA_CHART_CLIENT)
-            else:
-                self.chart.upload_chart(project_access["project_name"], r'./tests/apitests/python/{}-{}.tgz'.format(CHART_FILE_LIST[0]["name"], CHART_FILE_LIST[0]["version"]), expect_status_code = 403, **SYSTEM_RA_CHART_CLIENT)
-
-            if project_access["check_list"][5]:    #---helm-chart-version:delete---
-                self.chart.delete_chart_with_version(project_access["project_name"], CHART_FILE_LIST[1]["name"], CHART_FILE_LIST[1]["version"], **SYSTEM_RA_CHART_CLIENT)
-            else:
-                self.chart.delete_chart_with_version(project_access["project_name"], CHART_FILE_LIST[1]["name"], CHART_FILE_LIST[1]["version"], expect_status_code = 403, **SYSTEM_RA_CHART_CLIENT)
-
             repo_name, tag = push_self_build_image_to_project(project_access["project_name"], harbor_server, ADMIN_CLIENT["username"], ADMIN_CLIENT["password"], "test_create_tag", "latest_1")
             self.artifact.create_tag(project_access["project_name"], repo_name.split('/')[1], tag, "for_delete", **ADMIN_CLIENT)
-            if project_access["check_list"][6]:    #---tag:create---
+            if project_access["check_list"][3]:    #---tag:create---
                 self.artifact.create_tag(project_access["project_name"], repo_name.split('/')[1], tag, "1.0", **SYSTEM_RA_CLIENT)
             else:
                 self.artifact.create_tag(project_access["project_name"], repo_name.split('/')[1], tag, "1.0", expect_status_code = 403, **SYSTEM_RA_CLIENT)
 
-            if project_access["check_list"][7]:    #---tag:delete---
+            if project_access["check_list"][4]:    #---tag:delete---
                 self.artifact.delete_tag(project_access["project_name"], repo_name.split('/')[1], tag, "for_delete", **SYSTEM_RA_CLIENT)
             else:
                 self.artifact.delete_tag(project_access["project_name"], repo_name.split('/')[1], tag, "for_delete", expect_status_code = 403, **SYSTEM_RA_CLIENT)
@@ -277,12 +253,12 @@ class TestRobotAccount(unittest.TestCase):
             repo_name, tag = push_self_build_image_to_project(project_access["project_name"], harbor_server, ADMIN_CLIENT["username"], ADMIN_CLIENT["password"], "test_create_artifact_label", "latest_1")
             #Add project level label to artifact
             label_id, _ = self.label.create_label(project_id = project_access["project_id"], scope = "p", **ADMIN_CLIENT)
-            if project_access["check_list"][8]:    #---artifact-label:create---
+            if project_access["check_list"][5]:    #---artifact-label:create---
                 self.artifact.add_label_to_reference(project_access["project_name"], repo_name.split('/')[1], tag, int(label_id), **SYSTEM_RA_CLIENT)
             else:
                 self.artifact.add_label_to_reference(project_access["project_name"], repo_name.split('/')[1], tag, int(label_id), expect_status_code = 403, **SYSTEM_RA_CLIENT)
 
-            if project_access["check_list"][9]:    #---scan:create---
+            if project_access["check_list"][6]:    #---scan:create---
                 self.scan.scan_artifact(project_access["project_name"], repo_name.split('/')[1], tag, **SYSTEM_RA_CLIENT)
             else:
                 self.scan.scan_artifact(project_access["project_name"], repo_name.split('/')[1], tag, expect_status_code = 403, **SYSTEM_RA_CLIENT)
@@ -349,7 +325,7 @@ class TestRobotAccount(unittest.TestCase):
         self.verify_repository_unpushable(project_access_list, SYSTEM_RA_CLIENT)
 
         #20. Add a system robot account with all projects coverd;
-        all_true_access_list= self.robot.create_access_list( [True] * 10 )
+        all_true_access_list= self.robot.create_access_list( [True] * 7 )
         robot_account_Permissions_list = []
         robot_account_Permissions = v2_swagger_client.RobotPermission(kind = "project", namespace = "*", access = all_true_access_list)
         robot_account_Permissions_list.append(robot_account_Permissions)

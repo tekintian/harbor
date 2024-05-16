@@ -9,7 +9,18 @@ storage:
   {{storage_provider_info}}
   maintenance:
     uploadpurging:
+{% if purge_upload.enabled %}
+      enabled: true
+      age: {{ purge_upload.age }}
+      interval: {{ purge_upload.interval }}
+      {% if purge_upload.dryrun %}
+      dryrun: true
+      {% else %}
+      dryrun: false
+      {% endif %}
+{% else %}
       enabled: false
+{% endif %}
   delete:
     enabled: true
 {% if storage_redirect_disabled %}
@@ -29,6 +40,10 @@ redis:
   dialtimeout: 10s
   password: {{redis_password}}
   db: {{redis_db_index_reg}}
+  pool:
+    maxidle: 100
+    maxactive: 500
+    idletimeout: 60s
 http:
 {% if internal_tls.enabled %}
   addr: :5443

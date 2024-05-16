@@ -21,12 +21,11 @@ const (
 	EventTypeArtifactPush   = "artifact_push"
 	EventTypeArtifactDelete = "artifact_delete"
 	EventTypeTagDelete      = "tag_delete"
-	EventTypeChartUpload    = "chart_upload"
-	EventTypeChartDelete    = "chart_delete"
 )
 
-// Event is the model that defines the image/chart pull/push event
+// Event is the model that defines the image pull/push event
 type Event struct {
 	Type     string
 	Resource *model.Resource
+	Operator string
 }

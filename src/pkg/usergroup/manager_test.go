@@ -15,10 +15,13 @@
 package usergroup
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/usergroup/model"
 	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/suite"
-	"testing"
 )
 
 type ManagerTestSuite struct {
@@ -41,10 +44,49 @@ func (s *ManagerTestSuite) TestOnboardGroup() {
 	}
 	err := s.mgr.Onboard(ctx, ug)
 	s.Nil(err)
-	qm := model.UserGroup{GroupType: 1, LdapGroupDN: "cn=harbor_dev,ou=groups,dc=example,dc=com"}
-	ugs, err := s.mgr.List(ctx, qm)
+	ugs, err := s.mgr.List(ctx, q.New(q.KeyWords{"GroupType": 1, "LdapGroupDN": "cn=harbor_dev,ou=groups,dc=example,dc=com"}))
 	s.Nil(err)
 	s.True(len(ugs) > 0)
+}
+
+func (s *ManagerTestSuite) TestOnboardGroupWithDuplicatedName() {
+	ctx := s.Context()
+	ugs := []*model.UserGroup{
+		{
+			GroupName:   "harbor_dev",
+			GroupType:   1,
+			LdapGroupDN: "cn=harbor_dev,ou=groups,dc=example,dc=com",
+		},
+		{
+			GroupName:   "harbor_dev",
+			GroupType:   1,
+			LdapGroupDN: "cn=harbor_dev,ou=groups,dc=example2,dc=com",
+		},
+		{
+			GroupName:   "harbor_dev",
+			GroupType:   1,
+			LdapGroupDN: "cn=harbor_dev,ou=groups,dc=example3,dc=com,dc=verylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcname",
+		},
+	}
+	for _, ug := range ugs {
+		err := s.mgr.Onboard(ctx, ug)
+		s.Nil(err)
+	}
+	// both user group should be onboard to user group
+	ugs, err := s.mgr.List(ctx, q.New(q.KeyWords{"GroupType": 1, "LdapGroupDN": "cn=harbor_dev,ou=groups,dc=example,dc=com"}))
+	s.Nil(err)
+	s.True(len(ugs) > 0)
+
+	ugs, err = s.mgr.List(ctx, q.New(q.KeyWords{"GroupType": 1, "LdapGroupDN": "cn=harbor_dev,ou=groups,dc=example2,dc=com"}))
+	s.Nil(err)
+	s.True(len(ugs) > 0)
+	s.Equal("cn=harbor_dev,ou=groups,dc=example2,dc=com", ugs[0].GroupName)
+
+	ugs, err = s.mgr.List(ctx, q.New(q.KeyWords{"GroupType": 1, "LdapGroupDN": "cn=harbor_dev,ou=groups,dc=example3,dc=com,dc=verylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcname"}))
+	s.Nil(err)
+	s.True(len(ugs) > 0)
+	s.Equal("cn=harbor_dev,ou=groups,dc=example3,dc=com,dc=verylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcnameverylongdcna", ugs[0].GroupName)
+
 }
 
 func (s *ManagerTestSuite) TestPopulateGroup() {

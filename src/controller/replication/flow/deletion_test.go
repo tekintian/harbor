@@ -18,11 +18,13 @@ import (
 	"context"
 	"testing"
 
-	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
-	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/goharbor/harbor/src/testing/pkg/task"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
+
+	repctlmodel "github.com/goharbor/harbor/src/controller/replication/model"
+	"github.com/goharbor/harbor/src/pkg/reg/adapter"
+	"github.com/goharbor/harbor/src/pkg/reg/model"
+	"github.com/goharbor/harbor/src/testing/pkg/task"
 )
 
 type deletionFlowTestSuite struct {
@@ -30,15 +32,27 @@ type deletionFlowTestSuite struct {
 }
 
 func (d *deletionFlowTestSuite) TestRun() {
+	adp := &mockAdapter{}
+	factory := &mockFactory{}
+	factory.On("AdapterPattern").Return(nil)
+	factory.On("Create", mock.Anything).Return(adp, nil)
+	adapter.RegisterFactory("TEST_FOR_DELETION_FLOW", factory)
+
+	adp.On("Info").Return(&model.RegistryInfo{
+		SupportedResourceTypes: []string{
+			model.ResourceTypeArtifact,
+		},
+	}, nil)
+
 	taskMgr := &task.Manager{}
 	taskMgr.On("Create", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(int64(1), nil)
 
 	policy := &repctlmodel.Policy{
 		SrcRegistry: &model.Registry{
-			Type: model.RegistryTypeHarbor,
+			Type: "TEST_FOR_DELETION_FLOW",
 		},
 		DestRegistry: &model.Registry{
-			Type: model.RegistryTypeHarbor,
+			Type: "TEST_FOR_DELETION_FLOW",
 		},
 	}
 	resources := []*model.Resource{

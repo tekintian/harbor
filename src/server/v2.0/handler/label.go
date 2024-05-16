@@ -1,23 +1,38 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handler
 
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/rbac"
-	"github.com/goharbor/harbor/src/common/rbac/system"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/label"
 	pkg_model "github.com/goharbor/harbor/src/pkg/label/model"
 	"github.com/goharbor/harbor/src/server/v2.0/handler/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/label"
-	"strings"
 )
 
 func newLabelAPI() *labelAPI {
@@ -35,7 +50,9 @@ type labelAPI struct {
 
 func (lAPI *labelAPI) CreateLabel(ctx context.Context, params operation.CreateLabelParams) middleware.Responder {
 	label := &pkg_model.Label{}
-	lib.JSONCopy(label, params.Label)
+	if err := lib.JSONCopy(label, params.Label); err != nil {
+		log.Warningf("failed to call JSONCopy on Label when CreateLabel, error: %v", err)
+	}
 
 	label.Level = common.LabelLevelUser
 	if label.Scope == common.LabelScopeGlobal {
@@ -122,7 +139,9 @@ func (lAPI *labelAPI) ListLabels(ctx context.Context, params operation.ListLabel
 
 func (lAPI *labelAPI) UpdateLabel(ctx context.Context, params operation.UpdateLabelParams) middleware.Responder {
 	labelData := &pkg_model.Label{}
-	lib.JSONCopy(labelData, params.Label)
+	if err := lib.JSONCopy(labelData, params.Label); err != nil {
+		log.Warningf("failed to call JSONCopy on Label when UpdateLabel, error: %v", err)
+	}
 
 	label, err := lAPI.labelMgr.Get(ctx, params.LabelID)
 	if err != nil {
@@ -160,10 +179,6 @@ func (lAPI *labelAPI) DeleteLabel(ctx context.Context, params operation.DeleteLa
 		return lAPI.SendError(ctx, err)
 	}
 	id := label.ID
-	// TODO remove this step once chart-museum is removed.
-	if err := dao.DeleteResourceLabelByLabel(id); err != nil {
-		return lAPI.SendError(ctx, err)
-	}
 	if err := lAPI.labelMgr.RemoveFromAllArtifacts(ctx, id); err != nil {
 		return lAPI.SendError(ctx, err)
 	}
@@ -177,8 +192,7 @@ func (lAPI *labelAPI) DeleteLabel(ctx context.Context, params operation.DeleteLa
 func (lAPI *labelAPI) requireAccess(ctx context.Context, label *pkg_model.Label, action rbac.Action, subresources ...rbac.Resource) error {
 	switch label.Scope {
 	case common.LabelScopeGlobal:
-		resource := system.NewNamespace().Resource(rbac.ResourceLabel)
-		return lAPI.RequireSystemAccess(ctx, action, resource)
+		return lAPI.RequireSystemAccess(ctx, action, rbac.ResourceLabel)
 	case common.LabelScopeProject:
 		if len(subresources) == 0 {
 			subresources = append(subresources, rbac.ResourceLabel)

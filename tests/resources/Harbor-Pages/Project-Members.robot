@@ -19,28 +19,6 @@ Resource  ../../resources/Util.robot
 *** Variables ***
 
 *** Keywords ***
-Go Into Project
-    [Arguments]  ${project}  ${has_image}=${true}
-    Retry Keyword N Times When Error  5  Clear Search Input And Go Into Project  ${project}  ${has_image}
-
-Clear Search Input And Go Into Project
-    [Arguments]  ${project}  ${has_image}
-    # Close prompt in header
-    Sleep  2
-    #go To  ${url}
-    Reload Page
-    Sleep  2
-    # Clear Search Input
-    Retry Element Click  xpath=//harbor-app/harbor-shell/clr-main-container/navigator/clr-header/div[1]/a/span
-    Sleep  2
-    Retry Text Input  ${search_input}  ${project}
-    Sleep  2
-    # Go Into Project
-    ${out}  Run Keyword If  ${has_image}==${false}  Run Keywords  Retry Element Click  xpath=//*[@id='project-results']//clr-dg-cell[contains(.,'${project}')]/a  AND  Wait Until Element Is Visible And Enabled  xpath=//clr-dg-placeholder[contains(.,\"We couldn\'t find any repositories!\")]
-    ...  ELSE  Run Keywords  Retry Element Click  xpath=//*[@id='project-results']//clr-dg-cell[contains(.,'${project}')]/a  AND  Wait Until Element Is Visible And Enabled  xpath=//project-detail//hbr-repository-gridview//clr-dg-cell[contains(.,'${project}/')]
-    Sleep  1
-    Capture Page Screenshot
-
 Add User To Project Admin
     [Arguments]  ${project}  ${user}
     # *** this keyword has not been used ***
@@ -50,7 +28,6 @@ Add User To Project Admin
     Retry Text Input  xpath=${project_member_add_username_xpath}  ${user}
     Retry Element Click  xpath=${project_member_add_admin_xpath}
     Retry Element Click  xpath=${project_member_add_save_button_xpath}
-    Sleep  4
 
 Search Project Member
     [Arguments]  ${project}  ${user}
@@ -69,7 +46,7 @@ Change Project Member Role
 Change Member Role
     [Arguments]  ${user}  ${role}
     Retry Element Click  xpath=${project_member_tag_xpath}
-    Retry Element Click  xpath=//project-detail//clr-dg-row[contains(.,'${user}')]//clr-checkbox-wrapper
+    Retry Element Click  xpath=//project-detail//clr-dg-row[contains(.,'${user}')]//div[contains(@class,'clr-checkbox-wrapper')]
     #change role
     Retry Element Click  ${project_member_action_xpath}
     Retry Element Click  //button[contains(.,'${role}')]
@@ -79,13 +56,13 @@ Change Member Role
 
 User Can Change Role
      [arguments]  ${username}
-     Retry Element Click  xpath=//clr-dg-row[contains(.,'${username}')]//input/../label
+     Retry Element Click  xpath=//clr-dg-row[contains(.,'${username}')]//input/../label[contains(@class,'clr-control-label')]
      Retry Element Click  xpath=//*[@id='member-action']
      Retry Wait Until Page Not Contains Element  xpath=//button[@disabled='' and contains(.,'Admin')]
 
 User Can Not Change Role
      [arguments]  ${username}
-     Retry Element Click  xpath=//clr-dg-row[contains(.,'${username}')]//input/../label
+     Retry Element Click  xpath=//clr-dg-row[contains(.,'${username}')]//input/../label[contains(@class,'clr-control-label')]
      Retry Element Click  xpath=//*[@id='member-action']
      Retry Wait Until Page Contains Element  xpath=//button[@disabled='' and contains(.,'Admin')]
 
@@ -108,11 +85,10 @@ Add Guest Member To Project
 
 Delete Project Member
     [arguments]  ${member}
-    Retry Element Click  xpath=//clr-dg-row[contains(.,'${member}')]//input/../label
+    Retry Element Click  xpath=//clr-dg-row[contains(.,'${member}')]//input/../label[contains(@class,'clr-control-label')]
     Retry Double Keywords When Error  Retry Element Click  ${member_action_xpath}  Retry Wait Until Page Contains Element  ${delete_action_xpath}
     Retry Double Keywords When Error  Retry Element Click  ${delete_action_xpath}  Retry Wait Until Page Contains Element  ${repo_delete_on_card_view_btn}
     Retry Double Keywords When Error  Retry Element Click  ${repo_delete_on_card_view_btn}  Retry Wait Element  xpath=${project_member_xpath}
-    Sleep  1
 
 User Should Be Owner Of Project
     [Arguments]  ${user}  ${pwd}  ${project}

@@ -16,6 +16,7 @@ package scan
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
@@ -36,6 +37,10 @@ type DAO interface {
 	List(ctx context.Context, query *q.Query) ([]*Report, error)
 	// UpdateReportData only updates the `report` column with conditions matched.
 	UpdateReportData(ctx context.Context, uuid string, report string) error
+	// Update update report
+	Update(ctx context.Context, r *Report, cols ...string) error
+	// DeleteByExtraAttr delete the scan_report by mimeType and extra attribute
+	DeleteByExtraAttr(ctx context.Context, mimeType, attrName, attrValue string) error
 }
 
 // New returns an instance of the default DAO
@@ -95,5 +100,27 @@ func (d *dao) UpdateReportData(ctx context.Context, uuid string, report string) 
 	data["report"] = report
 
 	_, err = qt.Filter("uuid", uuid).Update(data)
+	return err
+}
+
+func (d *dao) Update(ctx context.Context, r *Report, cols ...string) error {
+	o, err := orm.FromContext(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := o.Update(r, cols...); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *dao) DeleteByExtraAttr(ctx context.Context, mimeType, attrName, attrValue string) error {
+	o, err := orm.FromContext(ctx)
+	if err != nil {
+		return err
+	}
+	delReportSQL := "delete from scan_report where mime_type = ? and report::jsonb @> ?"
+	dgstJSONStr := fmt.Sprintf(`{"%s":"%s"}`, attrName, attrValue)
+	_, err = o.Raw(delReportSQL, mimeType, dgstJSONStr).Exec()
 	return err
 }

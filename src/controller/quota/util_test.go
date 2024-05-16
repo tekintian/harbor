@@ -20,10 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/goharbor/harbor/src/common/models"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg/project/models"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/driver"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
@@ -32,7 +34,6 @@ import (
 	"github.com/goharbor/harbor/src/testing/mock"
 	quotatesting "github.com/goharbor/harbor/src/testing/pkg/quota"
 	drivertesting "github.com/goharbor/harbor/src/testing/pkg/quota/driver"
-	"github.com/stretchr/testify/suite"
 )
 
 type RefreshForProjectsTestSuite struct {
@@ -109,7 +110,6 @@ func (suite *RefreshForProjectsTestSuite) TestRefreshForProjects() {
 	q.SetUsed(types.ResourceList{types.ResourceStorage: 0})
 
 	mock.OnAnything(suite.quotaMgr, "GetByRef").Return(q, nil)
-	mock.OnAnything(suite.quotaMgr, "GetByRefForUpdate").Return(q, nil)
 	mock.OnAnything(suite.quotaMgr, "Update").Return(nil)
 	mock.OnAnything(suite.driver, "CalculateUsage").Return(types.ResourceList{types.ResourceStorage: 1}, nil)
 

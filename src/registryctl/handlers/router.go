@@ -15,14 +15,14 @@
 package handlers
 
 import (
-	"github.com/goharbor/harbor/src/registryctl/api/registry/manifest"
 	"net/http"
+
+	"github.com/gorilla/mux"
 
 	"github.com/goharbor/harbor/src/registryctl/api"
 	"github.com/goharbor/harbor/src/registryctl/api/registry/blob"
-	"github.com/goharbor/harbor/src/registryctl/api/registry/gc"
+	"github.com/goharbor/harbor/src/registryctl/api/registry/manifest"
 	"github.com/goharbor/harbor/src/registryctl/config"
-	"github.com/gorilla/mux"
 )
 
 func newRouter(conf config.Configuration) http.Handler {
@@ -31,7 +31,6 @@ func newRouter(conf config.Configuration) http.Handler {
 	rootRouter.StrictSlash(true)
 	rootRouter.HandleFunc("/api/health", api.Health).Methods("GET")
 
-	rootRouter.Path("/api/registry/gc").Methods(http.MethodPost).Handler(gc.NewHandler(conf.RegistryConfig))
 	rootRouter.Path("/api/registry/blob/{reference}").Methods(http.MethodDelete).Handler(blob.NewHandler(conf.StorageDriver))
 	rootRouter.Path("/api/registry/{name:.*}/manifests/{reference}").Methods(http.MethodDelete).Handler(manifest.NewHandler(conf.StorageDriver))
 	return rootRouter

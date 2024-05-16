@@ -15,18 +15,16 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 
 	common_http "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/common/http/modifier/auth"
 	"github.com/goharbor/harbor/src/common/utils"
-	"github.com/goharbor/harbor/src/lib/log"
-	"github.com/goharbor/harbor/src/registryctl/api/registry/gc"
+	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/pkg/registry/interceptor"
 )
 
 // const definition
@@ -38,8 +36,6 @@ const (
 type Client interface {
 	// Health tests the connection with registry server
 	Health() error
-	// StartGC enable the gc of registry server
-	StartGC() (*gc.Result, error)
 	// DeleteBlob deletes the specified blob. The "reference" should be "digest"
 	DeleteBlob(reference string) (err error)
 	// DeleteManifest deletes the specified manifest. The "reference" can be "tag" or "digest"
@@ -47,8 +43,9 @@ type Client interface {
 }
 
 type client struct {
-	baseURL string
-	client  *common_http.Client
+	baseURL      string
+	client       *common_http.Client
+	interceptors []interceptor.Interceptor
 }
 
 // Config contains configurations needed for client
@@ -57,19 +54,18 @@ type Config struct {
 }
 
 // NewClient return an instance of Registry client
-func NewClient(baseURL string, cfg *Config) Client {
+func NewClient(baseURL string, cfg *Config, interceptors ...interceptor.Interceptor) Client {
 	baseURL = strings.TrimRight(baseURL, "/")
 	if !strings.Contains(baseURL, "://") {
 		baseURL = "http://" + baseURL
 	}
 	client := &client{
-		baseURL: baseURL,
+		baseURL:      baseURL,
+		interceptors: interceptors,
 	}
 	if cfg != nil {
 		authorizer := auth.NewSecretAuthorizer(cfg.Secret)
-		client.client = common_http.NewClient(&http.Client{
-			Transport: common_http.GetHTTPTransport(common_http.SecureTransport),
-		}, authorizer)
+		client.client = common_http.NewClient(nil, authorizer)
 	}
 	return client
 }
@@ -81,36 +77,6 @@ func (c *client) Health() error {
 		addr = addr + ":80"
 	}
 	return utils.TestTCPConn(addr, 60, 2)
-}
-
-// StartGC ...
-func (c *client) StartGC() (*gc.Result, error) {
-	url := c.baseURL + "/api/registry/gc"
-	gcr := &gc.Result{}
-
-	req, err := http.NewRequest(http.MethodPost, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		log.Errorf("Failed to start gc: %d", resp.StatusCode)
-		return nil, fmt.Errorf("Failed to start GC: %d", resp.StatusCode)
-	}
-	if err := json.Unmarshal(data, gcr); err != nil {
-		return nil, err
-	}
-
-	return gcr, nil
 }
 
 // DeleteBlob ...
@@ -142,14 +108,19 @@ func (c *client) DeleteManifest(repository, reference string) (err error) {
 }
 
 func (c *client) do(req *http.Request) (*http.Response, error) {
-	req.Header.Set(http.CanonicalHeaderKey("User-Agent"), UserAgent)
+	for _, interceptor := range c.interceptors {
+		if err := interceptor.Intercept(req); err != nil {
+			return nil, err
+		}
+	}
+	req.Header.Set("User-Agent", UserAgent)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		defer resp.Body.Close()
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return nil, err
 		}

@@ -17,13 +17,14 @@ package handler
 import (
 	"context"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib"
-	"github.com/goharbor/harbor/src/lib/errors"
 	"strings"
 
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common/rbac"
 	"github.com/goharbor/harbor/src/controller/registry"
+	"github.com/goharbor/harbor/src/lib"
+	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
@@ -185,10 +186,16 @@ func (r *registryAPI) GetRegistryInfo(ctx context.Context, params operation.GetR
 	for _, trigger := range info.SupportedTriggers {
 		in.SupportedTriggers = append(in.SupportedTriggers, string(trigger))
 	}
+
+	// whether support copy by chunk
+	if info.SupportedCopyByChunk {
+		in.SupportedCopyByChunk = &info.SupportedCopyByChunk
+	}
+
 	return operation.NewGetRegistryInfoOK().WithPayload(in)
 }
 
-func (r *registryAPI) ListRegistryProviderTypes(ctx context.Context, params operation.ListRegistryProviderTypesParams) middleware.Responder {
+func (r *registryAPI) ListRegistryProviderTypes(ctx context.Context, _ operation.ListRegistryProviderTypesParams) middleware.Responder {
 	if err := r.RequireSystemAccess(ctx, rbac.ActionList, rbac.ResourceReplicationAdapter); err != nil {
 		return r.SendError(ctx, err)
 	}
@@ -264,7 +271,7 @@ func (r *registryAPI) PingRegistry(ctx context.Context, params operation.PingReg
 	return operation.NewPingRegistryOK()
 }
 
-func (r *registryAPI) ListRegistryProviderInfos(ctx context.Context, params operation.ListRegistryProviderInfosParams) middleware.Responder {
+func (r *registryAPI) ListRegistryProviderInfos(ctx context.Context, _ operation.ListRegistryProviderInfosParams) middleware.Responder {
 	if err := r.RequireSystemAccess(ctx, rbac.ActionList, rbac.ResourceReplicationAdapter); err != nil {
 		return r.SendError(ctx, err)
 	}

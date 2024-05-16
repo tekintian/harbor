@@ -18,12 +18,14 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/log"
+	proModels "github.com/goharbor/harbor/src/pkg/project/models"
+	userModels "github.com/goharbor/harbor/src/pkg/user/models"
 )
 
 const (
@@ -72,7 +74,6 @@ func InitDatabase(database *models.Database) error {
 }
 
 func getDatabase(database *models.Database) (db Database, err error) {
-
 	switch database.Type {
 	case "", "postgresql":
 		db = NewPGSQL(
@@ -84,6 +85,8 @@ func getDatabase(database *models.Database) (db Database, err error) {
 			database.PostGreSQL.SSLMode,
 			database.PostGreSQL.MaxIdleConns,
 			database.PostGreSQL.MaxOpenConns,
+			database.PostGreSQL.ConnMaxLifetime,
+			database.PostGreSQL.ConnMaxIdleTime,
 		)
 	default:
 		err = fmt.Errorf("invalid database: %s", database.Type)
@@ -104,20 +107,14 @@ func GetOrmer() orm.Ormer {
 	return globalOrm
 }
 
-// IsDupRecErr checks if the error is due to a duplication of record, currently this
-// works only for pgSQL
-func IsDupRecErr(e error) bool {
-	return strings.Contains(e.Error(), "duplicate key value violates unique constraint")
-}
-
 // ClearTable is the shortcut for test cases, it should be called only in test cases.
 func ClearTable(table string) error {
 	o := GetOrmer()
 	sql := fmt.Sprintf("delete from %s where 1=1", table)
-	if table == models.ProjectTable {
+	if table == proModels.ProjectTable {
 		sql = fmt.Sprintf("delete from %s where project_id > 1", table)
 	}
-	if table == models.UserTable {
+	if table == userModels.UserTable {
 		sql = fmt.Sprintf("delete from %s where user_id > 2", table)
 	}
 	if table == "project_member" { // make sure admin in library
@@ -128,22 +125,6 @@ func ClearTable(table string) error {
 	}
 	_, err := o.Raw(sql).Exec()
 	return err
-}
-
-// PaginateForRawSQL ...
-func PaginateForRawSQL(sql string, limit, offset int64) string {
-	return fmt.Sprintf("%s limit %d offset %d", sql, limit, offset)
-}
-
-// PaginateForQuerySetter ...
-func PaginateForQuerySetter(qs orm.QuerySeter, page, size int64) orm.QuerySeter {
-	if size > 0 {
-		qs = qs.Limit(size)
-		if page > 0 {
-			qs = qs.Offset((page - 1) * size)
-		}
-	}
-	return qs
 }
 
 // implements github.com/golang-migrate/migrate/v4.Logger

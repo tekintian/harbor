@@ -19,11 +19,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/pkg/blob"
 	"github.com/goharbor/harbor/src/pkg/quota"
 	"github.com/goharbor/harbor/src/pkg/quota/types"
 	"github.com/goharbor/harbor/src/testing/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type PostInitiateBlobUploadMiddlewareTestSuite struct {
@@ -57,6 +58,25 @@ func (suite *PostInitiateBlobUploadMiddlewareTestSuite) TestMiddleware() {
 			resources := args.Get(3).(types.ResourceList)
 			suite.Len(resources, 1)
 			suite.Equal(resources[types.ResourceStorage], int64(100))
+
+			f := args.Get(4).(func() error)
+			f()
+		})
+		mock.OnAnything(suite.quotaController, "GetByRef").Return(&quota.Quota{}, nil).Once()
+
+		req := httptest.NewRequest(http.MethodPost, url, nil)
+		rr := httptest.NewRecorder()
+
+		PostInitiateBlobUploadMiddleware()(next).ServeHTTP(rr, req)
+		suite.Equal(http.StatusOK, rr.Code)
+	}
+
+	{
+		url = "/v2/library/photon/blobs/uploads"
+		mock.OnAnything(suite.quotaController, "Request").Return(nil).Once().Run(func(args mock.Arguments) {
+			resources := args.Get(3).(types.ResourceList)
+			suite.Len(resources, 1)
+			suite.Equal(resources[types.ResourceStorage], int64(0))
 
 			f := args.Get(4).(func() error)
 			f()

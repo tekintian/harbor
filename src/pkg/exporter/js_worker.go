@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package exporter
 
 import (
@@ -5,15 +19,15 @@ import (
 	"time"
 
 	"github.com/gocraft/work"
-	redislib "github.com/goharbor/harbor/src/lib/redis"
 	"github.com/gomodule/redigo/redis"
+
+	redislib "github.com/goharbor/harbor/src/lib/redis"
 )
 
 const (
 	dialConnectionTimeout = 30 * time.Second
 	dialReadTimeout       = 10 * time.Second
 	dialWriteTimeout      = 10 * time.Second
-	pageItemNum           = 20.0
 )
 
 var (
@@ -45,7 +59,6 @@ func InitBackendWorker(redisPoolConfig *RedisPoolConfig) {
 	jsNamespace = fmt.Sprintf("{%s}", redisPoolConfig.Namespace)
 	// Start the backend worker
 	jsClient = work.NewClient(jsNamespace, pool)
-
 }
 
 // GetBackendWorker ...

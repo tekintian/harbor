@@ -17,11 +17,15 @@ package scanner
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
-	"github.com/google/uuid"
 )
+
+// Mgr is the global manager for scanner
+var Mgr = New()
 
 // Manager defines the related scanner API endpoints
 type Manager interface {
@@ -51,6 +55,9 @@ type Manager interface {
 
 	// GetDefault returns the default scanner registration or `nil` if there are no registrations configured.
 	GetDefault(ctx context.Context) (*scanner.Registration, error)
+
+	// DefaultScannerUUID get default scanner UUID
+	DefaultScannerUUID(ctx context.Context) (string, error)
 }
 
 // basicManager is the default implementation of Manager
@@ -137,4 +144,16 @@ func (bm *basicManager) SetAsDefault(ctx context.Context, registrationUUID strin
 // GetDefault ...
 func (bm *basicManager) GetDefault(ctx context.Context) (*scanner.Registration, error) {
 	return scanner.GetDefaultRegistration(ctx)
+}
+
+// DefaultScannerUUID returns the default scanner uuid.
+func (bm *basicManager) DefaultScannerUUID(ctx context.Context) (string, error) {
+	reg, err := bm.GetDefault(ctx)
+	if err != nil {
+		return "", err
+	}
+	if reg == nil {
+		return "", nil
+	}
+	return reg.UUID, nil
 }

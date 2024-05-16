@@ -1,60 +1,90 @@
 import { Injectable } from '@angular/core';
-import { from, Subject } from "rxjs";
+import { Subscription } from 'rxjs';
 
 @Injectable({
-  providedIn: "root"
+    providedIn: 'root',
 })
 export class EventService {
-
-  private listeners = {};
-  private eventsSubject = new Subject();
-  private events = from(this.eventsSubject);
-
-  constructor() {
-    this.events.subscribe(
-      ({name, args}) => {
-        if (this.listeners[name]) {
-          for (let listener of this.listeners[name]) {
-            listener(...args);
-          }
+    private _channels: any = [];
+    /**
+     * Subscribe to an event topic. Events that get posted to that topic will trigger the provided handler.
+     *
+     * @param {string} topic the topic to subscribe to
+     * @param {function} handler the event handler
+     * @return A Subscription to unsubscribe
+     */
+    subscribe(topic: HarborEvent, handler: Function): Subscription {
+        if (!this._channels[topic]) {
+            this._channels[topic] = [];
         }
-      });
-  }
-  subscribe(name: string, listener): any {
-    if (!this.listeners[name]) {
-      this.listeners[name] = [];
+        this._channels[topic].push(handler);
+        return new Subscription(() => {
+            this.unsubscribe(topic, handler);
+        });
     }
-    this.listeners[name].push(listener);
-    return {
-      unsubscribe: () => {
-        this.doUnsubscribe(name, listener);
-      }
-    };
-  }
-  doUnsubscribe(name, listener) {
-    this.listeners[name] = this.listeners[name].filter((v) => {
-      return v !== listener;
-    });
-  }
-  unsubscribe(name, listener?) {
-    if (this.listeners[name]) {
-      if (!listener) {
-        this.listeners[name] = [];
-      } else {
-        this.doUnsubscribe(name, listener);
-      }
+
+    /**
+     * Unsubscribe from the given topic. Your handler will no longer receive events published to this topic.
+     *
+     * @param {string} topic the topic to unsubscribe from
+     * @param {function} handler the event handler
+     *
+     */
+    private unsubscribe(topic: HarborEvent, handler: Function = null) {
+        let t = this._channels[topic];
+        if (!t) {
+            // Wasn't found, wasn't removed
+            return;
+        }
+        if (!handler) {
+            // Remove all handlers for this topic
+            delete this._channels[topic];
+            return;
+        }
+        // We need to find and remove a specific handler
+        let i = t.indexOf(handler);
+        if (i < 0) {
+            // Wasn't found, wasn't removed
+            return;
+        }
+        t.splice(i, 1);
+        // If the channel is empty now, remove it from the channel map
+        if (!t.length) {
+            delete this._channels[topic];
+        }
+        return;
     }
-  }
-  publish(name, ...args) {
-    this.eventsSubject.next({
-      name,
-      args
-    });
-  }
+
+    /**
+     * Publish an event to the given topic.
+     * @param topic
+     * @param data
+     */
+    publish(topic: HarborEvent, data?: any) {
+        const t = this._channels[topic];
+        if (!t) {
+            return;
+        }
+        t.forEach((handler: any) => {
+            handler(data);
+        });
+    }
 }
 
-
 export enum HarborEvent {
-  SCROLL = 'scroll',
-  SCROLL_TO_POSITION = 'scrollToPosition'
+    SCROLL = 'scroll',
+    SCROLL_TO_POSITION = 'scrollToPosition',
+    REFRESH_PROJECT_INFO = 'refreshProjectInfo',
+    START_SCAN_ARTIFACT = 'startScanArtifact',
+    START_GENERATE_SBOM = 'startGenerateSbom',
+    STOP_SCAN_ARTIFACT = 'stopScanArtifact',
+    STOP_SBOM_ARTIFACT = 'stopSbomArtifact',
+    UPDATE_VULNERABILITY_INFO = 'UpdateVulnerabilityInfo',
+    UPDATE_SBOM_INFO = 'UpdateSbomInfo',
+    REFRESH_EXPORT_JOBS = 'refreshExportJobs',
+    DELETE_ACCESSORY = 'deleteAccessory',
+    COPY_DIGEST = 'copyDigest',
+    REFRESH_BANNER_MESSAGE = 'refreshBannerMessage',
+    RETRIEVED_ICON = 'retrievedIcon',
+    THEME_CHANGE = 'themeChange',
 }

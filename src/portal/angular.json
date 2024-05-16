@@ -12,15 +12,15 @@
           "builder": "@angular-devkit/build-angular:browser",
           "options": {
             "allowedCommonJsDependencies": [
-              "swagger-ui",
-              "js-yaml"
+              "cron-validator",
+              "js-yaml",
+              "highcharts"
             ],
             "outputPath": "dist",
             "index": "src/index.html",
             "main": "src/main.ts",
-            "polyfills": "src/polyfills.ts",
+            "polyfills": "zone.js",
             "tsConfig": "tsconfig.app.json",
-            "extractCss": true,
             "assets": [
               "src/images",
               "src/favicon.ico",
@@ -30,7 +30,6 @@
             "styles": [
               "node_modules/@clr/icons/clr-icons.min.css",
               "node_modules/@clr/ui/clr-ui.min.css",
-              "node_modules/swagger-ui/dist/swagger-ui.css",
               "node_modules/prismjs/themes/prism-solarizedlight.css",
               "src/global.scss",
               {
@@ -45,24 +44,28 @@
               }
             ],
             "scripts": [
-              "node_modules/@webcomponents/webcomponentsjs/custom-elements-es5-adapter.js",
-              "node_modules/@webcomponents/webcomponentsjs/webcomponents-bundle.js",
-              "node_modules/core-js/client/shim.min.js",
-              "node_modules/mutationobserver-shim/dist/mutationobserver.min.js",
               "node_modules/@clr/icons/clr-icons.min.js",
-              "node_modules/web-animations-js/web-animations.min.js",
-              "node_modules/marked/lib/marked.js",
+              "node_modules/marked/marked.min.js",
               "node_modules/prismjs/prism.js",
-              "node_modules/prismjs/components/prism-yaml.min.js",
-              "node_modules/popper.js/dist/umd/popper.js"
-            ]
+              "node_modules/prismjs/components/prism-yaml.min.js"
+            ],
+            "aot": false,
+            "vendorChunk": true,
+            "extractLicenses": false,
+            "buildOptimizer": false,
+            "sourceMap": true,
+            "optimization": false,
+            "namedChunks": true
           },
           "configurations": {
             "production": {
-              "optimization": true,
+              "optimization": {
+                "styles": {
+                  "inlineCritical": false
+                }
+              },
               "outputHashing": "all",
               "sourceMap": false,
-              "extractCss": true,
               "namedChunks": false,
               "aot": true,
               "extractLicenses": true,
@@ -75,12 +78,14 @@
                 }
               ]
             }
-          }
+          },
+          "defaultConfiguration": ""
         },
         "serve": {
           "builder": "@angular-devkit/build-angular:dev-server",
           "options": {
-            "browserTarget": "harbor-portal:build"
+            "browserTarget": "harbor-portal:build",
+            "proxyConfig": "proxy.config.mjs"
           },
           "configurations": {
             "production": {
@@ -98,18 +103,13 @@
           "builder": "@angular-devkit/build-angular:karma",
           "options": {
             "tsConfig": "tsconfig.spec.json",
-            "main": "src/test.ts",
-            "polyfills": "src/polyfills.ts",
+            "polyfills": [
+              "zone.js",
+              "zone.js/testing"
+            ],
             "karmaConfig": "karma.conf.js",
             "scripts": [
-              "node_modules/core-js/client/shim.min.js",
-              "node_modules/mutationobserver-shim/dist/mutationobserver.min.js",
-              "node_modules/@webcomponents/custom-elements/custom-elements.min.js",
-              "node_modules/@clr/icons/clr-icons.min.js",
-              "node_modules/web-animations-js/web-animations.min.js",
-              "node_modules/marked/lib/marked.js",
-              "node_modules/prismjs/prism.js",
-              "node_modules/prismjs/components/prism-yaml.min.js"
+              "node_modules/@clr/icons/clr-icons.min.js"
             ],
             "styles": [
               "node_modules/@clr/icons/clr-icons.min.css",
@@ -123,42 +123,48 @@
               "src/i18n"
             ]
           }
-        }
-      }
-    },
-    "harbor-portal-e2e": {
-      "root": "e2e",
-      "sourceRoot": "e2e",
-      "projectType": "application",
-      "architect": {
-        "e2e": {
-          "builder": "@angular-devkit/build-angular:protractor",
-          "options": {
-            "protractorConfig": "./protractor.config.js",
-            "devServerTarget": "harbor-portal:serve"
-          }
         },
         "lint": {
-          "builder": "@angular-devkit/build-angular:tslint",
+          "builder": "@angular-eslint/builder:lint",
           "options": {
-            "tsConfig": [],
-            "exclude": []
+            "lintFilePatterns": [
+              "cypress/**/*.ts",
+              "server/**/*.ts",
+              "src/**/*.ts",
+              "src/**/*.html"
+            ]
+          }
+        },
+        "e2e": {
+          "builder": "@cypress/schematic:cypress",
+          "options": {
+            "devServerTarget": "harbor-portal:serve",
+            "watch": false,
+            "headless": true
+          },
+          "configurations": {
+            "production": {
+              "devServerTarget": "harbor-portal:serve:production"
+            }
           }
         }
       }
     }
   },
-  "defaultProject": "harbor-portal",
   "schematics": {
     "@schematics/angular:component": {
-      "prefix": "app",
-      "styleext": "scss"
+      "prefix": "app"
     },
     "@schematics/angular:directive": {
       "prefix": "app"
     }
   },
   "cli": {
-    "analytics": false
+    "analytics": false,
+    "schematicCollections": [
+      "@cypress/schematic",
+      "@cypress/schematic",
+      "@schematics/angular"
+    ]
   }
 }

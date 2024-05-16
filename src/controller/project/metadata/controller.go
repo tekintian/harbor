@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,8 @@ package metadata
 
 import (
 	"context"
+
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/project/metadata"
 )
 
@@ -40,7 +42,7 @@ type Controller interface {
 // NewController creates an instance of the default controller
 func NewController() Controller {
 	return &controller{
-		mgr: metadata.Mgr,
+		mgr: pkg.ProjectMetaMgr,
 	}
 }
 

@@ -18,16 +18,19 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config/models"
-	"github.com/goharbor/harbor/src/pkg/ldap/model"
+	"net"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
 	goldap "github.com/go-ldap/ldap/v3"
+
+	"github.com/goharbor/harbor/src/lib/config/models"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/pkg/ldap/model"
 )
+
+const pageSize = 1000
 
 // ErrNotFound ...
 var ErrNotFound = errors.New("entity not found")
@@ -53,6 +56,9 @@ var ErrInvalidFilter = errors.New("invalid filter syntax")
 // ErrEmptyBaseDN ...
 var ErrEmptyBaseDN = errors.New("empty base dn")
 
+// ErrEmptySearchDN ...
+var ErrEmptySearchDN = errors.New("empty search dn")
+
 // Session - define a LDAP session
 type Session struct {
 	basicCfg models.LdapConf
@@ -69,9 +75,7 @@ func NewSession(basicCfg models.LdapConf, groupCfg models.GroupConf) *Session {
 }
 
 func formatURL(ldapURL string) (string, error) {
-
 	var protocol, hostport string
-
 	_, err := url.Parse(ldapURL)
 	if err != nil {
 		return "", fmt.Errorf("parse Ldap Host ERR: %s", err)
@@ -89,15 +93,13 @@ func formatURL(ldapURL string) (string, error) {
 	}
 
 	if strings.Contains(hostport, ":") {
-		splitHostPort := strings.Split(hostport, ":")
-		port, err := strconv.Atoi(splitHostPort[1])
+		_, port, err := net.SplitHostPort(hostport)
 		if err != nil {
-			return "", fmt.Errorf("illegal url port")
+			return "", fmt.Errorf("illegal ldap url, error: %v", err)
 		}
-		if port == 636 {
+		if port == "636" {
 			protocol = "ldaps"
 		}
-
 	} else {
 		switch protocol {
 		case "ldap":
@@ -110,7 +112,6 @@ func formatURL(ldapURL string) (string, error) {
 	fLdapURL := protocol + "://" + hostport
 
 	return fLdapURL, nil
-
 }
 
 // TestConfig - test ldap session connection, out of the scope of normal session create/close
@@ -125,7 +126,7 @@ func TestConfig(ldapConfig models.LdapConf) (bool, error) {
 	defer ts.Close()
 
 	if ts.basicCfg.SearchDn == "" {
-		return false, ErrEmptyBaseDN
+		return false, ErrEmptySearchDN
 	}
 	if err := ts.Bind(ts.basicCfg.SearchDn, ts.basicCfg.SearchPassword); err != nil {
 		if goldap.IsErrorWithCode(err, goldap.LDAPResultInvalidCredentials) {
@@ -153,6 +154,9 @@ func (s *Session) SearchUser(username string) ([]model.User, error) {
 		groupDNList := make([]string, 0)
 		groupAttr := strings.ToLower(s.groupCfg.MembershipAttribute)
 		for _, attr := range ldapEntry.Attributes {
+			if attr == nil || len(attr.Values) == 0 {
+				continue
+			}
 			// OpenLdap sometimes contain leading space in username
 			val := strings.TrimSpace(attr.Values[0])
 			log.Debugf("Current ldap entry attr name: %s\n", attr.Name)
@@ -180,7 +184,6 @@ func (s *Session) SearchUser(username string) ([]model.User, error) {
 	}
 
 	return ldapUsers, nil
-
 }
 
 // Bind with specified DN and password, used in authentication
@@ -195,9 +198,12 @@ func (s *Session) Open() error {
 		return err
 	}
 	splitLdapURL := strings.Split(ldapURL, "://")
-	protocol, hostport := splitLdapURL[0], splitLdapURL[1]
-	host := strings.Split(hostport, ":")[0]
 
+	protocol, hostport := splitLdapURL[0], splitLdapURL[1]
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return err
+	}
 	connectionTimeout := s.basicCfg.ConnectionTimeout
 	goldap.DefaultTimeout = time.Duration(connectionTimeout) * time.Second
 
@@ -218,7 +224,6 @@ func (s *Session) Open() error {
 	}
 
 	return nil
-
 }
 
 // SearchLdap to search ldap with the provide filter
@@ -240,7 +245,6 @@ func (s *Session) SearchLdap(filter string) (*goldap.SearchResult, error) {
 
 // SearchLdapAttribute - to search ldap with the provide filter, with specified attributes
 func (s *Session) SearchLdapAttribute(baseDN, filter string, attributes []string) (*goldap.SearchResult, error) {
-
 	if err := s.Bind(s.basicCfg.SearchDn, s.basicCfg.SearchPassword); err != nil {
 		return nil, fmt.Errorf("can not bind search dn, error: %v", err)
 	}
@@ -265,7 +269,7 @@ func (s *Session) SearchLdapAttribute(baseDN, filter string, attributes []string
 		nil,
 	)
 
-	result, err := s.ldapConn.Search(searchRequest)
+	result, err := s.ldapConn.SearchWithPaging(searchRequest, pageSize)
 	if result != nil {
 		log.Debugf("Found entries:%v\n", len(result.Entries))
 	} else {
@@ -278,7 +282,6 @@ func (s *Session) SearchLdapAttribute(baseDN, filter string, attributes []string
 	}
 
 	return result, nil
-
 }
 
 // createUserSearchFilter - create filter to search user with specified username
@@ -370,7 +373,9 @@ func (s *Session) searchGroup(groupDN, filter, gName, groupNameAttribute string)
 		return ldapGroups, nil
 	}
 	groupName := ""
-	if len(result.Entries[0].Attributes) > 0 {
+	if len(result.Entries[0].Attributes) > 0 &&
+		result.Entries[0].Attributes[0] != nil &&
+		len(result.Entries[0].Attributes[0].Values) > 0 {
 		groupName = result.Entries[0].Attributes[0].Values[0]
 	} else {
 		groupName = groupDN

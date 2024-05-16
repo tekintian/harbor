@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/goharbor/harbor/src/common"
+	commonmodels "github.com/goharbor/harbor/src/common/models"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/project/models"
@@ -27,20 +29,22 @@ import (
 
 // DAO is the data access object interface for project
 type DAO interface {
-	// Create create a project instance
+	// Create creates a project instance
 	Create(ctx context.Context, project *models.Project) (int64, error)
 	// Count returns the total count of projects according to the query
 	Count(ctx context.Context, query *q.Query) (total int64, err error)
-	// Delete delete the project instance by id
+	// Delete deletes the project instance by id
 	Delete(ctx context.Context, id int64) error
-	// Get get project instance by id
+	// Get gets project instance by id
 	Get(ctx context.Context, id int64) (*models.Project, error)
 	// GetByName get project instance by name
 	GetByName(ctx context.Context, name string) (*models.Project, error)
-	// List list projects
+	// List lists projects
 	List(ctx context.Context, query *q.Query) ([]*models.Project, error)
-	// Lists the roles of user for the specific project
+	// ListRoles the roles of user for the specific project
 	ListRoles(ctx context.Context, projectID int64, userID int, groupIDs ...int) ([]int, error)
+	// ListAdminRolesOfUser returns the roles of user for the all projects
+	ListAdminRolesOfUser(ctx context.Context, user commonmodels.User) ([]models.Member, error)
 }
 
 // New returns an instance of the default DAO
@@ -50,7 +54,7 @@ func New() DAO {
 
 type dao struct{}
 
-// Create create a project instance
+// Create creates a project instance
 func (d *dao) Create(ctx context.Context, project *models.Project) (int64, error) {
 	var projectID int64
 
@@ -69,7 +73,7 @@ func (d *dao) Create(ctx context.Context, project *models.Project) (int64, error
 			return orm.WrapConflictError(err, "The project named %s already exists", project.Name)
 		}
 
-		member := &Member{
+		member := &models.Member{
 			ProjectID:    projectID,
 			EntityID:     project.OwnerID,
 			Role:         common.RoleProjectAdmin,
@@ -85,7 +89,7 @@ func (d *dao) Create(ctx context.Context, project *models.Project) (int64, error
 		return nil
 	}
 
-	if err := orm.WithTransaction(h)(ctx); err != nil {
+	if err := orm.WithTransaction(h)(orm.SetTransactionOpNameToContext(ctx, "tx-create-project")); err != nil {
 		return 0, err
 	}
 
@@ -104,7 +108,7 @@ func (d *dao) Count(ctx context.Context, query *q.Query) (total int64, err error
 	return qs.Count()
 }
 
-// Delete delete the project instance by id
+// Delete deletes the project instance by id
 func (d *dao) Delete(ctx context.Context, id int64) error {
 	project, err := d.Get(ctx, id)
 	if err != nil {
@@ -112,7 +116,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 	}
 
 	project.Deleted = true
-	project.Name = fmt.Sprintf("%s#%d", project.Name, project.ProjectID)
+	project.Name = lib.Truncate(project.Name, fmt.Sprintf("#%d", project.ProjectID), 255)
 
 	o, err := orm.FromContext(ctx)
 	if err != nil {
@@ -123,7 +127,7 @@ func (d *dao) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// Get get project instance by id
+// Get gets project instance by id
 func (d *dao) Get(ctx context.Context, id int64) (*models.Project, error) {
 	o, err := orm.FromContext(ctx)
 	if err != nil {
@@ -169,7 +173,7 @@ func (d *dao) List(ctx context.Context, query *q.Query) ([]*models.Project, erro
 }
 
 func (d *dao) ListRoles(ctx context.Context, projectID int64, userID int, groupIDs ...int) ([]int, error) {
-	qs, err := orm.QuerySetter(ctx, &Member{}, nil)
+	qs, err := orm.QuerySetter(ctx, &models.Member{}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -197,4 +201,41 @@ func (d *dao) ListRoles(ctx context.Context, projectID int64, userID int, groupI
 	}
 
 	return roles, nil
+}
+
+func (d *dao) ListAdminRolesOfUser(ctx context.Context, user commonmodels.User) ([]models.Member, error) {
+	o, err := orm.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var membersU []models.Member
+	sqlU := `select b.* from project as a left join project_member as b on a.project_id = b.project_id where a.deleted = 'f' and b.entity_id = ? and b.entity_type = 'u' and b.role = 1;`
+	_, err = o.Raw(sqlU, user.UserID).QueryRows(&membersU)
+	if err != nil {
+		return nil, err
+	}
+
+	var membersG []models.Member
+	if len(user.GroupIDs) > 0 {
+		var params []interface{}
+		params = append(params, user.GroupIDs)
+		sqlG := fmt.Sprintf(`select b.* from project as a 
+    		left join project_member as b on a.project_id = b.project_id 
+           	where a.deleted = 'f' and b.entity_id in ( %s ) and b.entity_type = 'g' and b.role = 1;`, orm.ParamPlaceholderForIn(len(user.GroupIDs)))
+		_, err = o.Raw(sqlG, params).QueryRows(&membersG)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var members []models.Member
+	if len(membersU) > 0 {
+		members = append(members, membersU...)
+	}
+	if len(membersG) > 0 {
+		members = append(members, membersG...)
+	}
+
+	return members, nil
 }

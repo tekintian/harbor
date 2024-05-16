@@ -2,7 +2,6 @@ package notification
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/common/dao"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 )
 
 func TestSlackHandler_Handle(t *testing.T) {
-	dao.PrepareTestForPostgresSQL()
 	hookMgr := notification.HookManager
 	defer func() {
 		notification.HookManager = hookMgr
@@ -105,4 +103,33 @@ func TestSlackHandler_IsStateful(t *testing.T) {
 func TestSlackHandler_Name(t *testing.T) {
 	handler := &SlackHandler{}
 	assert.Equal(t, "Slack", handler.Name())
+}
+
+func Test_escapeEventData(t *testing.T) {
+	type args struct {
+		str string
+	}
+	tests := []struct {
+		name string
+		args args
+		want string
+	}{
+		{
+			name: `escape "`,
+			args: args{str: `{"foo":"bar"}`},
+			want: `{\"foo\":\"bar\"}`,
+		},
+		{
+			name: `escape \\"`,
+			args: args{str: `{\"foo\":\"bar\"}`},
+			want: `{\\\"foo\\\":\\\"bar\\\"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := escapeEventData(tt.args.str); got != tt.want {
+				t.Errorf("escapeEventData() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }

@@ -18,12 +18,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 
 	common_http "github.com/goharbor/harbor/src/common/http"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	"github.com/goharbor/harbor/src/pkg/reg/util"
 	"github.com/goharbor/harbor/src/pkg/registry/auth/basic"
 )
 
@@ -48,7 +47,7 @@ func newClient(reg *model.Registry) *client {
 	return &client{
 		client: common_http.NewClient(
 			&http.Client{
-				Transport: util.GetHTTPTransport(reg.Insecure),
+				Transport: common_http.GetHTTPTransport(common_http.WithInsecure(reg.Insecure)),
 			},
 			basic.NewAuthorizer(username, password),
 		),
@@ -75,7 +74,7 @@ func (c *client) getDockerRepositories() ([]*repository, error) {
 
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return repositories, err
 	}
@@ -110,7 +109,7 @@ func (c *client) createDockerRepository(name string) error {
 		return nil
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}

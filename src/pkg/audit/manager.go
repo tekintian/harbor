@@ -16,6 +16,8 @@ package audit
 
 import (
 	"context"
+
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/audit/dao"
 	"github.com/goharbor/harbor/src/pkg/audit/model"
@@ -36,6 +38,10 @@ type Manager interface {
 	Create(ctx context.Context, audit *model.AuditLog) (id int64, err error)
 	// Delete the audit log specified by ID
 	Delete(ctx context.Context, id int64) (err error)
+	// Purge delete the audit log with retention hours
+	Purge(ctx context.Context, retentionHour int, includeOperations []string, dryRun bool) (int64, error)
+	// UpdateUsername Replace all log records username with its hash
+	UpdateUsername(ctx context.Context, username string, replaceWith string) error
 }
 
 // New returns a default implementation of Manager
@@ -47,6 +53,10 @@ func New() Manager {
 
 type manager struct {
 	dao dao.DAO
+}
+
+func (m *manager) UpdateUsername(ctx context.Context, username string, replaceWith string) error {
+	return m.dao.UpdateUsername(ctx, username, replaceWith)
 }
 
 // Count ...
@@ -66,7 +76,20 @@ func (m *manager) Get(ctx context.Context, id int64) (*model.AuditLog, error) {
 
 // Create ...
 func (m *manager) Create(ctx context.Context, audit *model.AuditLog) (int64, error) {
+	if len(config.AuditLogForwardEndpoint(ctx)) > 0 {
+		LogMgr.DefaultLogger(ctx).WithField("operator", audit.Username).
+			WithField("time", audit.OpTime).WithField("resourceType", audit.ResourceType).
+			Infof("action:%s, resource:%s", audit.Operation, audit.Resource)
+	}
+	if config.SkipAuditLogDatabase(ctx) {
+		return 0, nil
+	}
 	return m.dao.Create(ctx, audit)
+}
+
+// Purge ...
+func (m *manager) Purge(ctx context.Context, retentionHour int, includeOperations []string, dryRun bool) (int64, error) {
+	return m.dao.Purge(ctx, retentionHour, includeOperations, dryRun)
 }
 
 // Delete ...

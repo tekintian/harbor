@@ -20,6 +20,8 @@ import (
 	"github.com/goharbor/harbor/src/controller/artifact"
 	"github.com/goharbor/harbor/src/controller/artifact/processor/image"
 	"github.com/goharbor/harbor/src/controller/scanner"
+	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg/accessory"
 	models "github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
 )
 
@@ -33,6 +35,7 @@ type Checker interface {
 func NewChecker() Checker {
 	return &checker{
 		artifactCtl:   artifact.Ctl,
+		accMgr:        accessory.Mgr,
 		scannerCtl:    scanner.DefaultController,
 		registrations: map[int64]*models.Registration{},
 	}
@@ -40,6 +43,7 @@ func NewChecker() Checker {
 
 type checker struct {
 	artifactCtl   artifact.Controller
+	accMgr        accessory.Manager
 	scannerCtl    scanner.Controller
 	registrations map[int64]*models.Registration
 }
@@ -69,9 +73,29 @@ func (c *checker) IsScannable(ctx context.Context, art *artifact.Artifact) (bool
 	var scannable bool
 
 	walkFn := func(a *artifact.Artifact) error {
+		ok, err := c.isAccessory(ctx, a)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+
 		if hasCapability(r, a) {
 			scannable = true
 			return artifact.ErrBreak
+		}
+
+		// because there are lots of in-toto sbom artifacts in dockerhub and replicated to Harbor, they are considered as image type
+		// when scanning these type of sbom artifact, the scanner might assume it is image layer with tgz format, and if scanner read the layer with a stream of tgz,
+		// it fail and close the stream abruptly and cause the pannic in the harbor core log
+		// to avoid pannic, skip scan the in-toto sbom artifact sbom artifact
+		unscannable, err := c.artifactCtl.HasUnscannableLayer(ctx, a.Digest)
+		if err != nil {
+			return err
+		}
+		if unscannable {
+			return nil
 		}
 
 		return nil
@@ -82,6 +106,17 @@ func (c *checker) IsScannable(ctx context.Context, art *artifact.Artifact) (bool
 	}
 
 	return scannable, nil
+}
+
+func (c *checker) isAccessory(ctx context.Context, art *artifact.Artifact) (bool, error) {
+	ac, err := c.accMgr.List(ctx, q.New(q.KeyWords{"ArtifactID": art.Artifact.ID, "digest": art.Artifact.Digest}))
+	if err != nil {
+		return false, err
+	}
+	if len(ac) > 0 {
+		return true, nil
+	}
+	return false, nil
 }
 
 // hasCapability returns true when scanner has capability for the artifact

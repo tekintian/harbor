@@ -1,11 +1,15 @@
-
 # photon based image
 FROM photon:4.0
 ENV LANG C.UTF-8
+ENV HELM_EXPERIMENTAL_OCI=1
+ENV COSIGN_PASSWORD=Harbor12345
+ENV COSIGN_EXPERIMENTAL=1
+ENV COSIGN_OCI_EXPERIMENTAL=1
+ENV NOTATION_EXPERIMENTAL=1
 
 COPY --from=tool_builder /tool/tools.tar.gz /usr/local/bin
 
-RUN tdnf install -y \
+RUN tdnf update -y && tdnf install -y \
     wget \
     git \
     openjdk8 \
@@ -20,9 +24,9 @@ RUN tdnf install -y \
     gzip && \
     tdnf erase -y toybox && \
     tdnf install -y python3 python3-pip python3-setuptools httpd && \
-    pip3 install --upgrade pip pyasn1 google-apitools==0.5.31 gsutil \
-    robotframework==3.2.1 robotframework-sshlibrary robotframework-httplibrary \
-    requests dbbot robotframework-seleniumlibrary==4.3.0 robotframework-pabot \
+    pip3 install --upgrade pip pyasn1 google-apitools==0.5.31 gsutil python-dateutil \
+    robotframework==6.0.1 robotframework-sshlibrary robotframework-httplibrary \
+    requests dbbot robotframework-seleniumlibrary robotframework-pabot \
     robotframework-JSONLibrary hurry.filesize --upgrade && \
     tdnf clean all
 
@@ -41,5 +45,7 @@ RUN chmod +x /usr/local/bin/dockerd-entrypoint.sh && \
     mkdir -p $HOME/.pki/nssdb && \
     echo Harbor12345 > password.ca && \
     certutil -d sql:$HOME/.pki/nssdb -N -f password.ca
+
+RUN tdnf install -y podman
 
 VOLUME /var/lib/docker

@@ -43,7 +43,6 @@ Init LDAP
 
 Switch To Configure
     Retry Element Click  xpath=${configuration_xpath}
-    Sleep  2
 
 Test Ldap Connection
     ${rc}  ${output}=  Run And Return Rc And Output  ip addr s eth0 |grep "inet "|awk '{print $2}' |awk -F "/" '{print $1}'
@@ -137,12 +136,9 @@ Project Creation Should Display
 Project Creation Should Not Display
     Retry Wait Until Page Not Contains Element  xpath=${project_create_xpath}
 
-## System settings
 Switch To System Settings
-    Sleep  1
     Retry Element Click  xpath=${configuration_xpath}
     Retry Element Click  xpath=${configuration_system_tabsheet_id}
-    Sleep  1
 
 Switch To Project Quotas
     Sleep  1
@@ -152,9 +148,7 @@ Switch To Project Quotas
     Sleep  1
 
 Switch To Distribution
-    Sleep  1
     Retry Element Click  xpath=//clr-main-container//clr-vertical-nav-group//span[contains(.,'Distributions')]
-    Sleep  1
 
 Switch To Robot Account
     Sleep  1
@@ -191,34 +185,6 @@ Switch To System Replication
 Should Verify Remote Cert Be Enabled
     Checkbox Should Not Be Selected  xpath=//*[@id='clr-checkbox-verifyRemoteCert']
 
-## Email
-Switch To Email
-    Switch To Configure
-    Retry Element Click  xpath=//*[@id='config-email']
-    Sleep  1
-
-Config Email
-    Input Text  xpath=//*[@id='mailServer']  smtp.vmware.com
-    Input Text  xpath=//*[@id='emailPort']  25
-    Input Text  xpath=//*[@id='emailUsername']  example@vmware.com
-    Input Text  xpath=//*[@id='emailPassword']  example
-    Input Text  xpath=//*[@id='emailFrom']  example<example@vmware.com>
-    Sleep  1
-    Retry Element Click  xpath=//*[@id='emailSSL-wrapper']/label
-    Sleep  1
-    Retry Element Click  xpath=//*[@id='emailInsecure-wrapper']/label
-    Sleep  1
-    Retry Element Click  xpath=${config_email_save_button_xpath}
-    Sleep  6
-
-Verify Email
-    Textfield Value Should Be  xpath=//*[@id='mailServer']  smtp.vmware.com
-    Textfield Value Should Be  xpath=//*[@id='emailPort']  25
-    Textfield Value Should Be  xpath=//*[@id='emailUsername']  example@vmware.com
-    Textfield Value Should Be  xpath=//*[@id='emailFrom']  example<example@vmware.com>
-    Checkbox Should Be Selected  xpath=//*[@id='emailSSL']
-    Checkbox Should Not Be Selected  xpath=//*[@id='emailInsecure']
-
 Set Scan All To None
     Retry Element Click  //vulnerability-config//select
     Retry Element Click  //vulnerability-config//select/option[@value='none']
@@ -250,11 +216,14 @@ Switch To System Labels
     Sleep  1
     Retry Element Click  xpath=//clr-main-container//clr-vertical-nav//a[contains(.,'Labels')]
 
-## System labels
 Switch To Configuration System Setting
     Sleep  1
     Retry Element Click  xpath=${configuration_xpath}
     Retry Element Click  xpath=${configuration_system_tabsheet_id}
+
+Switch To Configuration Security
+    Retry Element Click  xpath=${configuration_xpath}
+    Retry Double Keywords When Error  Retry Element Click  xpath=${configuration_security_tabsheet_id}  Retry Wait Until Page Contains  Deployment security
 
 Switch To Configuration Project Quotas
     Sleep  1
@@ -276,7 +245,7 @@ Create New Labels
 
 Update A Label
     [Arguments]  ${labelname}
-    Retry Element Click  xpath=//clr-dg-row[contains(.,'${labelname}')]//clr-checkbox-wrapper
+    Retry Element Click  xpath=//clr-dg-row[contains(.,'${labelname}')]//div[contains(@class,'clr-checkbox-wrapper')]//label[contains(@class,'clr-control-label')]
     Sleep  1
     Retry Element Click  xpath=//button[contains(.,'Edit')]
     Sleep  1
@@ -287,57 +256,33 @@ Update A Label
 
 Delete A Label
     [Arguments]  ${labelname}
-    Retry Element Click  xpath=//clr-dg-row[contains(.,'${labelname}')]//clr-checkbox-wrapper
+    Retry Element Click  xpath=//clr-dg-row[contains(.,'${labelname}')]//div[contains(@class,'clr-checkbox-wrapper')]//label[contains(@class,'clr-control-label')]
     Sleep  1
     Retry Element Click  xpath=//button[contains(.,'Delete')]
     Sleep  3
     Retry Element Click  xpath=//clr-modal//div//button[contains(.,'DELETE')]
     Wait Until Page Contains Element  //*[@id='contentAll']//div[contains(.,'${labelname}')]/../div/clr-icon[@shape='success-standard']
 
-## Garbage Collection
-Switch To Garbage Collection
-    Switch To Configure
-    Sleep  1
-    Retry Element Click  xpath=${gc_config_page}
-    Wait Until Page Contains Element  ${garbage_collection_xpath}
-    Retry Element Click  xpath=${garbage_collection_xpath}
-
-Set GC Schedule
-    [Arguments]  ${type}  ${value}=${null}
-    Switch To Garbage Collection
-    Retry Double Keywords When Error  Retry Element Click  ${GC_schedule_edit_btn}  Retry Wait Until Page Not Contains Element  ${GC_schedule_edit_btn}
-    Retry Element Click  ${GC_schedule_select}
-    Run Keyword If  '${type}'=='custom'  Run Keywords  Retry Element Click  ${vulnerability_dropdown_list_item_custom}  AND  Retry Text Input  ${targetCron_id}  ${value}
-    ...  ELSE  Retry Element Click  ${vulnerability_dropdown_list_item_none}
-    Retry Double Keywords When Error  Retry Element Click  ${GC_schedule_save_btn}  Retry Wait Until Page Not Contains Element  ${GC_schedule_save_btn}
-    Capture Page Screenshot
-
-Click GC Now
-    Sleep  1
-    Retry Element Click  xpath=${gc_now_xpath}
-    Sleep  2
-
-View GC Details
-    Retry Element Click  xpath=${gc_log_details_xpath}
-    Sleep  2
-
-Switch To GC History
-    Retry Element Click  xpath=${gc_log_xpath}
-    Retry Wait Until Page Contains  Job
-
 Add Items To System CVE Allowlist
     [Arguments]    ${cve_id}
     Retry Element Click    ${configuration_system_wl_add_btn}
     Retry Text Input    ${configuration_system_wl_textarea}    ${cve_id}
     Retry Element Click    ${configuration_system_wl_add_confirm_btn}
-    Retry Element Click    ${config_system_save_button_xpath}
+    Retry Element Click    ${config_security_save_button_xpath}
 
 Delete Top Item In System CVE Allowlist
     [Arguments]  ${count}=1
     FOR  ${idx}  IN RANGE  1  ${count}
-        Retry Element Click    ${configuration_system_wl_delete_a_cve_id_icon}
+        Retry Element Click  ${configuration_system_wl_delete_a_cve_id_icon}
     END
-    Retry Element Click    ${config_system_save_button_xpath}
+    Retry Element Click  ${config_security_save_button_xpath}
+
+Set CVE Allowlist Expires
+    [Arguments]  ${expired}
+    Retry Button Click  ${cve_allowlist_expires_btn}
+    ${element}=  Set Variable If  ${expired}  ${cve_allowlist_expires_yesterday}  ${cve_allowlist_expires_tomorrow}
+    Retry Element Click  ${element}
+    Retry Element Click  //button[contains(.,'SAVE')]
 
 Get Project Count Quota Text From Project Quotas List
     [Arguments]    ${project_name}
@@ -367,7 +312,7 @@ Set User Name Claim And Save
 
 Select Distribution
     [Arguments]    ${name}
-    Retry Element Click    //clr-dg-row[contains(.,'${name}')]//clr-checkbox-wrapper/label
+    Retry Element Click    //clr-dg-row[contains(.,'${name}')]//div[contains(@class,'clr-checkbox-wrapper')]/label[contains(@class,'clr-control-label')]
 
 Distribution Exist
     [Arguments]  ${name}  ${endpoint}
@@ -404,21 +349,91 @@ Delete A Distribution
     ${is_exsit}    evaluate    not ${deletable}
     Switch To Distribution
     Filter Distribution List  ${name}  ${endpoint}
-    Retry Double Keywords When Error  Select Distribution   ${name}  Wait Until Element Is Visible  //clr-datagrid//clr-dg-footer//clr-checkbox-wrapper/label
+    Retry Double Keywords When Error  Select Distribution   ${name}  Wait Until Element Is Visible  //clr-datagrid//clr-dg-footer//clr-checkbox-wrapper/label[contains(@class,'clr-control-label')]
     Retry Double Keywords When Error  Retry Element Click  ${distribution_action_btn_id}  Wait Until Element Is Visible And Enabled  ${distribution_del_btn_id}
     Retry Double Keywords When Error  Retry Element Click  ${distribution_del_btn_id}  Wait Until Element Is Visible And Enabled  ${delete_confirm_btn}
     Retry Double Keywords When Error  Retry Element Click  ${delete_confirm_btn}  Retry Wait Until Page Not Contains Element  ${delete_confirm_btn}
-    Sleep  10
     Filter Distribution List  ${name}  ${endpoint}  exsit=${is_exsit}
 
 Edit A Distribution
     [Arguments]    ${name}  ${endpoint}  ${new_endpoint}=${null}
     Switch To Distribution
     Filter Distribution List  ${name}  ${endpoint}
-    Retry Double Keywords When Error  Select Distribution   ${name}  Wait Until Element Is Visible  //clr-datagrid//clr-dg-footer//clr-checkbox-wrapper/label  times=9
+    Retry Double Keywords When Error  Select Distribution   ${name}  Wait Until Element Is Visible  //clr-datagrid//clr-dg-footer//clr-checkbox-wrapper/label[contains(@class,'clr-control-label')]  times=9
     Retry Double Keywords When Error  Retry Element Click  ${distribution_action_btn_id}  Wait Until Element Is Visible And Enabled  ${distribution_edit_btn_id}
     Retry Double Keywords When Error  Retry Element Click  ${distribution_edit_btn_id}  Wait Until Element Is Visible And Enabled  ${distribution_name_input_id}
     Retry Text Input  ${distribution_endpoint_id}  ${new_endpoint}
     Retry Double Keywords When Error  Retry Element Click  ${distribution_add_save_btn_id}  Retry Wait Until Page Not Contains Element  xpath=${distribution_add_save_btn_id}
     Filter Distribution List  ${name}  ${new_endpoint}
     Distribution Exist  ${name}  ${new_endpoint}
+
+Set Audit Log Forward
+    [Arguments]  ${syslog_endpoint}  ${expected_msg}
+    Switch To System Settings
+    Run Keyword If  '${syslog_endpoint}' == '${null}'  Press Keys  ${audit_log_forward_syslog_endpoint_input_id}  CTRL+a  BACKSPACE
+    ...  ELSE  Retry Text Input  ${audit_log_forward_syslog_endpoint_input_id}  ${syslog_endpoint}
+    Retry Double Keywords When Error  Retry Element Click  ${config_save_button_xpath}  Retry Wait Until Page Contains  ${expected_msg}
+
+Enable Skip Audit Log Database
+    Switch To System Settings
+    Retry Double Keywords When Error  Click Element  ${skip_audit_log_database_label}  Checkbox Should Be Selected  ${skip_audit_log_database_checkbox}
+    Retry Double Keywords When Error  Retry Element Click  ${config_save_button_xpath}  Retry Wait Until Page Contains  Configuration has been successfully saved.
+
+Set Up Retain Image Last Pull Time
+    [Arguments]  ${action}
+    Run Keyword If  '${action}'=='enable'  Retry Double Keywords When Error  Click Element  ${retain_image_last_pull_time_label}  Checkbox Should Be Selected  ${retain_image_last_pull_time_checkbox}
+    ...  ELSE  Retry Double Keywords When Error  Click Element  ${retain_image_last_pull_time_label}  Checkbox Should Not Be Selected  ${retain_image_last_pull_time_checkbox}
+    Retry Double Keywords When Error  Retry Element Click  ${config_save_button_xpath}  Retry Wait Until Page Contains  Configuration has been successfully saved.
+
+Set Banner Message
+    [Arguments]  ${message}  ${message_type}=${null}  ${closable}=${null}  ${in_duration}=${null}
+    IF  '${message}' != '${null}'
+        Retry Text Input  ${banner_message_input_id}  ${message}
+        Select From List By Value  ${banner_message_type_select_id}  ${message_type}
+        Run Keyword If  '${closable}' == '${true}'  Retry Element Click  ${banner_message_closable_checkbox}
+        IF  '${in_duration}' == '${true}'
+            Retry Element Click  ${banner_message_from_date}
+            Retry Element Click  //td[.//button[contains(@class,'is-today')]]
+            Retry Element Click  ${banner_message_to_date}
+            Retry Element Click  ${banner_message_date_next_month}
+            Retry Element Click  (//td[.//button[text()=' 1 ']])[1]
+        ELSE IF  '${in_duration}' == '${false}'
+            Retry Element Click  ${banner_message_from_date}
+            Retry Element Click  ${banner_message_date_next_month}
+            Retry Element Click  (//td[.//button[text()=' 1 ']])[1]
+            Retry Element Click  ${banner_message_to_date}
+            Retry Element Click  ${banner_message_date_next_month}
+            Retry Element Click  (//td[.//button[text()=' 1 ']])[1]
+        END
+    ELSE
+        Clear Field Of Characters  ${banner_message_input_id}  23
+    END
+    Retry Double Keywords When Error  Retry Element Click  ${config_save_button_xpath}  Retry Wait Until Page Contains  Configuration has been successfully saved.
+
+Check Banner Message
+    [Arguments]  ${message}  ${message_type}=${null}  ${closable}=${null}
+    IF  '${message}' == '${null}'
+        Retry Wait Element Not Visible  ${banner_message_alert}
+    ELSE
+        Retry Wait Element  //span[text()='${message}']
+        ${message_type_class}=  Create Dictionary  success=alert-success  info=alert-info  warning=alert-warning  danger=alert-danger
+        Retry Wait Element  //app-app-level-alerts//clr-alerts[contains(@class,'${message_type_class}[${message_type}]')]
+        Run Keyword If  '${closable}' == '${true}'  Retry Wait Element  ${banner_message_close_alert}
+    END
+
+Check Banner Message on other pages
+    [Arguments]  ${message}  ${message_type}=${null}  ${closable}=${null}
+    @{pages}=	 Create List  harbor/projects  harbor/logs  harbor/users  harbor/robot-accounts  harbor/Registries
+    ...  harbor/replications  harbor/distribution/instances  harbor/labels  harbor/project-quotas  harbor/interrogation-services/scanners
+    ...  harbor/interrogation-services/vulnerability  harbor/interrogation-services/security-hub  harbor/clearing-job/gc
+    ...  harbor/clearing-job/audit-log-purge  harbor/job-service-dashboard/pending-jobs  harbor/job-service-dashboard/schedules
+    ...  harbor/job-service-dashboard/workers  harbor/configs/auth  harbor/configs/security  harbor/configs/setting
+    ...  harbor/projects/1/repositories  harbor/projects/1/members  harbor/projects/1/labels  harbor/projects/1/scanner
+    ...  harbor/projects/1/p2p-provider/policies  harbor/projects/1/tag-strategy/tag-retention  harbor/projects/1/tag-strategy/immutable-tag
+    ...  harbor/projects/1/robot-account  harbor/projects/1/webhook  harbor/projects/1/logs  harbor/projects/1/configs
+    FOR  ${page}  IN  @{pages}
+        Go To  ${HARBOR_URL}/${page}
+        Check Banner Message  ${message}  ${message_type}  ${closable}
+    END
+    Logout Harbor
+    Check Banner Message  ${message}  ${message_type}  ${closable}

@@ -15,20 +15,21 @@
 package config
 
 import (
-	"github.com/goharbor/harbor/src/lib/config/models"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"os"
 	"path"
 	"runtime"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/goharbor/harbor/src/common"
 	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/common/utils/test"
 	. "github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/config/models"
+	"github.com/goharbor/harbor/src/lib/orm"
 	_ "github.com/goharbor/harbor/src/pkg/config/db"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
-	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -41,9 +42,7 @@ func TestConfig(t *testing.T) {
 	dao.PrepareTestData([]string{"delete from properties where k='scan_all_policy'"}, []string{})
 	defaultCACertPath = path.Join(currPath(), "test", "ca.crt")
 	c := map[string]interface{}{
-		common.WithTrivy:       false,
-		common.WithChartMuseum: false,
-		common.WithNotary:      false,
+		common.WithTrivy: false,
 	}
 	Init()
 
@@ -58,17 +57,10 @@ func TestConfig(t *testing.T) {
 	defer os.Remove(secretKeyPath)
 	assert := assert.New(t)
 
-	if err := os.Setenv("KEY_PATH", secretKeyPath); err != nil {
-		t.Fatalf("failed to set env %s: %v", "KEY_PATH", err)
-	}
-	oriKeyPath := os.Getenv("TOKEN_PRIVATE_KEY_PATH")
-	if err := os.Setenv("TOKEN_PRIVATE_KEY_PATH", ""); err != nil {
-		t.Fatalf("failed to set env %s: %v", "TOKEN_PRIVATE_KEY_PATH", err)
-	}
-	defer os.Setenv("TOKEN_PRIVATE_KEY_PATH", oriKeyPath)
-
-	os.Setenv("JOBSERVICE_URL", "http://myjob:8888")
-	os.Setenv("GC_TIME_WINDOW_HOURS", "0")
+	t.Setenv("KEY_PATH", secretKeyPath)
+	t.Setenv("TOKEN_PRIVATE_KEY_PATH", "")
+	t.Setenv("JOBSERVICE_URL", "http://myjob:8888")
+	t.Setenv("GC_TIME_WINDOW_HOURS", "0")
 
 	Init()
 	ctx := orm.Context()
@@ -138,10 +130,6 @@ func TestConfig(t *testing.T) {
 		t.Fatalf("failed to get onldy admin create project: %v", err)
 	}
 
-	if _, err := Email(ctx); err != nil {
-		t.Fatalf("failed to get email settings: %v", err)
-	}
-
 	if _, err := Database(); err != nil {
 		t.Fatalf("failed to get database: %v", err)
 	}
@@ -149,12 +137,6 @@ func TestConfig(t *testing.T) {
 	defaultConfig := test.GetDefaultConfigMap()
 	Upload(defaultConfig)
 
-	if InternalNotaryEndpoint() != "http://notary-server:4443" {
-		t.Errorf("Unexpected notary endpoint: %s", InternalNotaryEndpoint())
-	}
-	if WithNotary() {
-		t.Errorf("Withnotary should be false")
-	}
 	if WithTrivy() {
 		t.Errorf("WithTrivy should be false")
 	}

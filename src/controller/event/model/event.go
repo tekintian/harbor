@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package model
 
 import "github.com/goharbor/harbor/src/pkg/retention/policy/rule"
@@ -21,10 +35,11 @@ type Replication struct {
 
 // ArtifactInfo describe info of artifact
 type ArtifactInfo struct {
-	Type       string `json:"type"`
-	Status     string `json:"status"`
-	NameAndTag string `json:"name_tag"`
-	FailReason string `json:"fail_reason,omitempty"`
+	Type       string   `json:"type"`
+	Status     string   `json:"status"`
+	NameAndTag string   `json:"name_tag"`
+	References []string `json:"references"`
+	FailReason string   `json:"fail_reason,omitempty"`
 }
 
 // ReplicationResource describes replication resource info
@@ -58,4 +73,10 @@ type RetentionRule struct {
 	TagSelectors []*rule.Selector `json:"tag_selectors,omitempty" `
 	// Selector attached to the rule for filtering scope (e.g: repositories or namespaces)
 	ScopeSelectors map[string][]*rule.Selector `json:"scope_selectors,omitempty"`
+}
+
+// Scan describes scan infos
+type Scan struct {
+	// ScanType the scan type
+	ScanType string `json:"scan_type,omitempty"`
 }

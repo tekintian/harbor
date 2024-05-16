@@ -376,11 +376,14 @@ external_redis:
   host: {{ external_redis.host }}:{{ external_redis.port }}
   password: {{ external_redis.password }}
   # sentinel_master_set must be set to support redis+sentinel
+  {% if external_redis.sentinel_master_set is defined %}
+  sentinel_master_set: {{ external_redis.sentinel_master_set }}
+  {% else %}
   #sentinel_master_set:
+  {% endif %}
   # db_index 0 is for core, it's unchangeable
   registry_db_index: {{ external_redis.registry_db_index }}
   jobservice_db_index: {{ external_redis.jobservice_db_index }}
-  chartmuseum_db_index: {{ external_redis.chartmuseum_db_index }}
   clair_db_index: {{ external_redis.clair_db_index }}
   trivy_db_index: 5
   idle_timeout_seconds: 30
@@ -398,7 +401,6 @@ external_redis:
 #   # db_index 0 is for core, it's unchangeable
 #   registry_db_index: 1
 #   jobservice_db_index: 2
-#   chartmuseum_db_index: 3
 #   clair_db_index: 4
 #   trivy_db_index: 5
 #   idle_timeout_seconds: 30

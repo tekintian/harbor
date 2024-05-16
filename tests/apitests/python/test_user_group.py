@@ -23,7 +23,7 @@ import unittest
 import testutils
 from testutils import ADMIN_CLIENT
 
-from swagger_client.models.user_group import UserGroup
+from v2_swagger_client.models.user_group import UserGroup
 from library.configurations import Configurations
 from pprint import pprint
 
@@ -34,7 +34,6 @@ from pprint import pprint
 
 class TestUserGroup(unittest.TestCase):
     """UserGroup unit test stubs"""
-    product_api = testutils.GetProductApi("admin", "Harbor12345")
     usergroup_api = testutils.GetUserGroupApi("admin", "Harbor12345")
     groupId = 0
     def setUp(self):

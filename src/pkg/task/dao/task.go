@@ -16,13 +16,17 @@ package dao
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/lib/errors"
+	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
+
+	"github.com/google/uuid"
 )
 
 // TaskDAO is the data access object interface for task
@@ -47,6 +51,13 @@ type TaskDAO interface {
 	ListStatusCount(ctx context.Context, executionID int64) (statusCounts []*StatusCount, err error)
 	// GetMaxEndTime gets the max end time for the tasks references the specified execution
 	GetMaxEndTime(ctx context.Context, executionID int64) (endTime time.Time, err error)
+	// UpdateStatusInBatch updates the status of tasks in batch
+	UpdateStatusInBatch(ctx context.Context, jobIDs []string, status string, batchSize int) (err error)
+	// ExecutionIDsByVendorAndStatus retrieve the execution id by vendor status
+	ExecutionIDsByVendorAndStatus(ctx context.Context, vendorType, status string) ([]int64, error)
+	// ListScanTasksByReportUUID lists scan tasks by report uuid, although it's a specific case but it will be
+	// more suitable to support multi database in the future.
+	ListScanTasksByReportUUID(ctx context.Context, uuid string) (tasks []*Task, err error)
 }
 
 // NewTaskDAO returns an instance of TaskDAO
@@ -77,6 +88,36 @@ func (t *taskDAO) List(ctx context.Context, query *q.Query) ([]*Task, error) {
 		return nil, err
 	}
 	if _, err = qs.All(&tasks); err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+func isValidUUID(id string) bool {
+	if len(id) == 0 {
+		return false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return false
+	}
+	return true
+}
+
+func (t *taskDAO) ListScanTasksByReportUUID(ctx context.Context, uuid string) ([]*Task, error) {
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if !isValidUUID(uuid) {
+		return nil, errors.BadRequestError(fmt.Errorf("invalid UUID %v", uuid))
+	}
+
+	var tasks []*Task
+	param := fmt.Sprintf(`{"report_uuids":["%s"]}`, uuid)
+	sql := `SELECT * FROM task WHERE extra_attrs::jsonb @> cast( ? as jsonb )`
+	_, err = ormer.Raw(sql, param).QueryRows(&tasks)
+	if err != nil {
 		return nil, err
 	}
 	return tasks, nil
@@ -203,6 +244,9 @@ func (t *taskDAO) GetMaxEndTime(ctx context.Context, executionID int64) (time.Ti
 	var endTime time.Time
 	err = ormer.Raw("select max(end_time) from task where execution_id = ?", executionID).
 		QueryRow(&endTime)
+	if err != nil {
+		return time.Time{}, err
+	}
 	return endTime, nil
 }
 
@@ -239,6 +283,40 @@ func (t *taskDAO) querySetter(ctx context.Context, query *q.Query) (orm.QuerySet
 		}
 		qs = qs.FilterRaw("id", inClause)
 	}
-
 	return qs, nil
+}
+
+func (t *taskDAO) ExecutionIDsByVendorAndStatus(ctx context.Context, vendorType, status string) ([]int64, error) {
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	_, err = ormer.Raw("select distinct execution_id from task where vendor_type =? and status = ?", vendorType, status).QueryRows(&ids)
+	return ids, err
+}
+
+func (t *taskDAO) UpdateStatusInBatch(ctx context.Context, jobIDs []string, status string, batchSize int) (err error) {
+	if len(jobIDs) == 0 {
+		return nil
+	}
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return err
+	}
+	sql := "update task set status = ?, update_time = ? where job_id in (%s)"
+	if len(jobIDs) <= batchSize {
+		realSQL := fmt.Sprintf(sql, orm.ParamPlaceholderForIn(len(jobIDs)))
+		_, err = ormer.Raw(realSQL, status, time.Now(), jobIDs).Exec()
+		return err
+	}
+	subSetIDs := make([]string, batchSize)
+	copy(subSetIDs, jobIDs[:batchSize])
+	sql = fmt.Sprintf(sql, orm.ParamPlaceholderForIn(batchSize))
+	_, err = ormer.Raw(sql, status, time.Now(), subSetIDs).Exec()
+	if err != nil {
+		log.Errorf("failed to update status in batch, error: %v", err)
+		return err
+	}
+	return t.UpdateStatusInBatch(ctx, jobIDs[batchSize:], status, batchSize)
 }

@@ -16,10 +16,11 @@ package scan
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -34,6 +35,7 @@ import (
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/pkg/robot/model"
+	"github.com/goharbor/harbor/src/pkg/scan/dao/scan"
 	"github.com/goharbor/harbor/src/pkg/scan/dao/scanner"
 	"github.com/goharbor/harbor/src/pkg/scan/report"
 	v1 "github.com/goharbor/harbor/src/pkg/scan/rest/v1"
@@ -144,16 +146,36 @@ func (j *Job) Validate(params job.Parameters) error {
 func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 	// Get logger
 	myLogger := ctx.GetLogger()
+	startTime := time.Now()
+
+	// shouldStop checks if the job should be stopped
+	shouldStop := func() bool {
+		if cmd, ok := ctx.OPCommand(); ok && cmd == job.StopCommand {
+			myLogger.Info("scan job being stopped")
+			return true
+		}
+
+		return false
+	}
 
 	// Ignore errors as they have been validated already
 	r, _ := extractRegistration(params)
 	req, _ := ExtractScanReq(params)
-	mimes, _ := extractMimeTypes(params)
+	mimeTypes, _ := extractMimeTypes(params)
+	scanType := v1.ScanTypeVulnerability
+	if len(req.RequestType) > 0 {
+		scanType = req.RequestType[0].Type
+	}
+	handler := GetScanHandler(scanType)
 
 	// Print related infos to log
-	printJSONParameter(JobParamRegistration, params[JobParamRegistration].(string), myLogger)
-	printJSONParameter(JobParameterRequest, removeAuthInfo(req), myLogger)
-	myLogger.Infof("Report mime types: %v\n", mimes)
+	printJSONParameter(JobParamRegistration, removeRegistrationAuthInfo(r), myLogger)
+	printJSONParameter(JobParameterRequest, removeScanAuthInfo(req), myLogger)
+	myLogger.Infof("Report mime types: %v\n", mimeTypes)
+
+	if shouldStop() {
+		return nil
+	}
 
 	// Submit scan request to the scanner adapter
 	client, err := r.Client(v1.DefaultClientPool)
@@ -167,9 +189,11 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 	robotAccount, _ := extractRobotAccount(params)
 
 	var authorization string
+	var tokenURL string
+
 	authType, _ := extractAuthType(params)
 	if authType == authorizationBearer {
-		tokenURL, err := getInternalTokenServiceEndpoint(ctx)
+		tokenURL, err = getInternalTokenServiceEndpoint(ctx)
 		if err != nil {
 			return errors.Wrap(err, "scan job: get token service endpoint")
 		}
@@ -178,7 +202,11 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 		authorization, err = makeBasicAuthorization(robotAccount)
 	}
 	if err != nil {
-		logAndWrapError(myLogger, err, "scan job: make authorization")
+		_ = logAndWrapError(myLogger, err, "scan job: make authorization")
+	}
+
+	if shouldStop() {
+		return nil
 	}
 
 	req.Registry.Authorization = authorization
@@ -188,13 +216,14 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 	}
 
 	// For collecting errors
-	errs := make([]error, len(mimes))
+	errs := make([]error, len(mimeTypes))
+	rawReports := make([]string, len(mimeTypes))
 
 	// Concurrently retrieving report by different mime types
 	wg := &sync.WaitGroup{}
-	wg.Add(len(mimes))
+	wg.Add(len(mimeTypes))
 
-	for i, mt := range mimes {
+	for i, mimeType := range mimeTypes {
 		go func(i int, m string) {
 			defer wg.Done()
 
@@ -208,51 +237,30 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 			for {
 				select {
 				case t := <-tm.C:
+					if shouldStop() {
+						return
+					}
+
 					myLogger.Debugf("check scan report for mime %s at %s", m, t.Format("2006/01/02 15:04:05"))
 
-					rawReport, err := client.GetScanReport(resp.ID, m)
+					reportURLParameter, err := handler.ReportURLParameter(req)
+					if err != nil {
+						errs[i] = errors.Wrap(err, "scan job: get report url")
+						return
+					}
+					rawReport, err := fetchScanReportFromScanner(client, resp.ID, m, reportURLParameter)
 					if err != nil {
 						// Not ready yet
 						if notReadyErr, ok := err.(*v1.ReportNotReadyError); ok {
 							// Reset to the new check interval
 							tm.Reset(time.Duration(notReadyErr.RetryAfter) * time.Second)
 							myLogger.Infof("Report with mime type %s is not ready yet, retry after %d seconds", m, notReadyErr.RetryAfter)
-
 							continue
 						}
-
-						errs[i] = errors.Wrap(err, fmt.Sprintf("check scan report with mime type %s", m))
+						errs[i] = errors.Wrap(err, fmt.Sprintf("scan job: fetch scan report, mimetype %v", m))
 						return
 					}
-
-					// Make sure the data is aligned with the v1 spec.
-					if _, err = report.ResolveData(m, []byte(rawReport)); err != nil {
-						errs[i] = errors.Wrap(err, "scan job: resolve report data")
-						return
-					}
-
-					// Check in
-					cir := &CheckInReport{
-						Digest:           req.Artifact.Digest,
-						RegistrationUUID: r.UUID,
-						MimeType:         m,
-						RawReport:        rawReport,
-					}
-
-					var (
-						jsonData string
-						er       error
-					)
-					if jsonData, er = cir.ToJSON(); er == nil {
-						if er = ctx.Checkin(jsonData); er == nil {
-							// Done!
-							myLogger.Infof("Report with mime type %s is checked in", m)
-							return
-						}
-					}
-
-					// Send error and exit
-					errs[i] = errors.Wrap(er, fmt.Sprintf("check in scan report for mime type %s", m))
+					rawReports[i] = rawReport
 					return
 				case <-ctx.SystemContext().Done():
 					// Terminated by system
@@ -262,11 +270,15 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 					return
 				}
 			}
-		}(i, mt)
+		}(i, mimeType)
 	}
 
 	// Wait for all the retrieving routines are completed
 	wg.Wait()
+
+	if shouldStop() {
+		return nil
+	}
 
 	// Merge errors
 	for _, e := range errs {
@@ -282,9 +294,60 @@ func (j *Job) Run(ctx job.Context, params job.Parameters) error {
 	// Log error to the job log
 	if err != nil {
 		myLogger.Error(err)
+		return err
 	}
 
-	return err
+	for i, mimeType := range mimeTypes {
+		rp, err := getReportPlaceholder(ctx.SystemContext(), req.Artifact.Digest, r.UUID, mimeType, myLogger)
+		if err != nil {
+			return err
+		}
+		myLogger.Debugf("Converting report ID %s to the new V2 schema", rp.UUID)
+
+		reportData, err := handler.PostScan(ctx, req, rp, rawReports[i], startTime, robotAccount)
+		if err != nil {
+			myLogger.Errorf("Failed to convert vulnerability data to new schema for report %s, error %v", rp.UUID, err)
+			return err
+		}
+
+		// update the original report with the new summarized report with all vulnerability data removed.
+		// this is required since the top level layers relay on the vuln.Report struct that
+		// contains additional metadata within the report which if stored in the new columns within the scan_report table
+		// would be redundant
+		if err := report.Mgr.UpdateReportData(ctx.SystemContext(), rp.UUID, reportData); err != nil {
+			myLogger.Errorf("Failed to update report data for report %s, error %v", rp.UUID, err)
+			return err
+		}
+
+		myLogger.Debugf("Converted report ID %s to the new V2 schema", rp.UUID)
+	}
+
+	return nil
+}
+
+func getReportPlaceholder(ctx context.Context, digest string, reportUUID string, mimeType string, logger logger.Interface) (*scan.Report, error) {
+	reports, err := report.Mgr.GetBy(ctx, digest, reportUUID, []string{mimeType})
+	if err != nil {
+		logger.Error("Failed to get report for artifact %s of mimetype %s, error %v", digest, mimeType, err)
+		return nil, err
+	}
+	if len(reports) == 0 {
+		logger.Errorf("No report found for artifact %s of mimetype %s, error %v", digest, mimeType, err)
+		return nil, errors.NotFoundError(nil).WithMessage("no report found to update data")
+	}
+	return reports[0], nil
+}
+
+func fetchScanReportFromScanner(client v1.Client, requestID string, mimType string, urlParameter string) (rawReport string, err error) {
+	rawReport, err = client.GetScanReport(requestID, mimType, urlParameter)
+	if err != nil {
+		return "", err
+	}
+	// Make sure the data is aligned with the v1 spec.
+	if _, err = report.ResolveData(mimType, []byte(rawReport)); err != nil {
+		return "", err
+	}
+	return rawReport, nil
 }
 
 // ExtractScanReq extracts the scan request from the job parameters.
@@ -310,7 +373,20 @@ func ExtractScanReq(params job.Parameters) (*v1.ScanRequest, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
-
+	reqType := v1.ScanTypeVulnerability
+	// attach the request with ProducesMimeTypes and Parameters
+	if len(req.RequestType) > 0 {
+		// current only support requestType with one element for each request
+		if len(req.RequestType[0].Type) > 0 {
+			reqType = req.RequestType[0].Type
+		}
+		handler := GetScanHandler(reqType)
+		if handler == nil {
+			return nil, errors.Errorf("failed to get scan handler, request type %v", reqType)
+		}
+		req.RequestType[0].ProducesMimeTypes = handler.RequestProducesMineTypes()
+		req.RequestType[0].Parameters = handler.RequestParameters()
+	}
 	return req, nil
 }
 
@@ -322,7 +398,7 @@ func logAndWrapError(logger logger.Interface, err error, message string) error {
 }
 
 func printJSONParameter(parameter string, v string, logger logger.Interface) {
-	logger.Infof("%s:\n", parameter)
+	logger.Debugf("%s:\n", parameter)
 	printPrettyJSON([]byte(v), logger)
 }
 
@@ -336,18 +412,50 @@ func printPrettyJSON(in []byte, logger logger.Interface) {
 	logger.Infof("%s\n", out.String())
 }
 
-func removeAuthInfo(sr *v1.ScanRequest) string {
+func removeScanAuthInfo(sr *v1.ScanRequest) string {
 	req := &v1.ScanRequest{
 		Artifact: sr.Artifact,
 		Registry: &v1.Registry{
 			URL:           sr.Registry.URL,
 			Authorization: "[HIDDEN]",
 		},
+		RequestType: sr.RequestType,
 	}
 
 	str, err := req.ToJSON()
 	if err != nil {
-		logger.Error(errors.Wrap(err, "scan job: remove auth"))
+		logger.Error(errors.Wrap(err, "scan job: remove auth for scan request"))
+	}
+
+	return str
+}
+
+func removeRegistrationAuthInfo(sr *scanner.Registration) string {
+	req := &scanner.Registration{
+		ID:               sr.ID,
+		UUID:             sr.UUID,
+		Name:             sr.Name,
+		Description:      sr.Description,
+		URL:              sr.URL,
+		Disabled:         sr.Disabled,
+		IsDefault:        sr.IsDefault,
+		Health:           sr.Health,
+		Auth:             sr.Auth,
+		AccessCredential: "[HIDDEN]",
+		SkipCertVerify:   sr.SkipCertVerify,
+		UseInternalAddr:  sr.UseInternalAddr,
+		Immutable:        sr.Immutable,
+		Adapter:          sr.Adapter,
+		Vendor:           sr.Vendor,
+		Version:          sr.Version,
+		Metadata:         sr.Metadata,
+		CreateTime:       sr.CreateTime,
+		UpdateTime:       sr.UpdateTime,
+	}
+
+	str, err := req.ToJSON()
+	if err != nil {
+		logger.Error(errors.Wrap(err, "scan job: remove auth for registration"))
 	}
 
 	return str
@@ -487,7 +595,7 @@ func makeBearerAuthorization(robotAccount *model.Robot, tokenURL string, reposit
 	req.Header.Set("Authorization", auth)
 
 	client := &http.Client{
-		Transport: commonhttp.GetHTTPTransportByInsecure(true),
+		Transport: commonhttp.GetHTTPTransport(commonhttp.WithInsecure(true)),
 	}
 
 	resp, err := client.Do(req)
@@ -496,7 +604,7 @@ func makeBearerAuthorization(robotAccount *model.Robot, tokenURL string, reposit
 	}
 	defer resp.Body.Close()
 
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}

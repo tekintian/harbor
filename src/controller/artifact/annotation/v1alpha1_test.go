@@ -17,16 +17,17 @@ package annotation
 import (
 	"encoding/base64"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"strings"
 	"testing"
 
-	"github.com/goharbor/harbor/src/pkg/artifact"
-	"github.com/goharbor/harbor/src/pkg/distribution"
-	reg "github.com/goharbor/harbor/src/testing/pkg/registry"
-
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/pkg/artifact"
+	"github.com/goharbor/harbor/src/pkg/distribution"
+	"github.com/goharbor/harbor/src/testing/mock"
+	reg "github.com/goharbor/harbor/src/testing/pkg/registry"
 )
 
 var (
@@ -123,6 +124,31 @@ var (
         }
     ]
 }`
+
+	unknownManifestwithIcon = `{
+    "schemaVersion":2,
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "config": {
+        "mediaType": "application/vnd.nhl.peanut.butter.bagel",
+        "digest": "sha256:ee29d2e91da0e5dbf6536f5b369148a83ef59b0ce96e49da65dd6c25eb1fa44f",
+        "size": 33
+    },
+    "layers":[
+        {
+            "mediaType": "image/png",
+            "digest": "sha256:d923b93eadde0af5c639a972710a4d919066aba5d0dfbf4b9385099f70272da0",
+            "size": 166015,
+            "annotations": { 
+                "io.goharbor.artifact.v1alpha1.icon": ""
+            }
+        },
+        {
+            "mediaType":"application/tar+gzip",
+            "digest":"sha256:eb6063fecbb50a9d98268cb61746a0fd62a27a4af9e850ffa543a1a62d3948b2",
+            "size":166022
+        }
+    ]
+}`
 	ormbManifestWithoutSkipList = `{
     "schemaVersion":2,
     "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -172,31 +198,47 @@ var (
 // v1alpha1TestSuite is a test suite of testing v1alpha1 parser
 type v1alpha1TestSuite struct {
 	suite.Suite
-	regCli         *reg.FakeClient
+	regCli         *reg.Client
 	v1alpha1Parser *v1alpha1Parser
 }
 
 func (p *v1alpha1TestSuite) SetupTest() {
-	p.regCli = &reg.FakeClient{}
+	p.regCli = &reg.Client{}
 	p.v1alpha1Parser = &v1alpha1Parser{
 		regCli: p.regCli,
 	}
 }
+func (p *v1alpha1TestSuite) TestParseUnknownConfig() {
+	manifest, _, err := distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(unknownManifestwithIcon))
+	p.Require().Nil(err)
+	manifestMediaType, content, err := manifest.Payload()
+	p.Require().Nil(err)
 
+	art := &artifact.Artifact{ManifestMediaType: manifestMediaType}
+
+	blob := io.NopCloser(base64.NewDecoder(base64.StdEncoding, strings.NewReader(ormbIcon)))
+	p.regCli.On("PullBlob", mock.Anything, mock.Anything).Return(int64(0), blob, nil)
+	err = p.v1alpha1Parser.Parse(nil, art, content)
+	p.Require().Nil(err)
+	p.Len(art.ExtraAttrs, 0)
+	p.Equal("sha256:d923b93eadde0af5c639a972710a4d919066aba5d0dfbf4b9385099f70272da0", art.Icon)
+
+}
 func (p *v1alpha1TestSuite) TestParse() {
+	// ormbManifest
 	manifest, _, err := distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(ormbManifest))
 	p.Require().Nil(err)
 	manifestMediaType, content, err := manifest.Payload()
 	p.Require().Nil(err)
 
 	metadata := map[string]interface{}{}
-	configBlob := ioutil.NopCloser(strings.NewReader(ormbConfig))
+	configBlob := io.NopCloser(strings.NewReader(ormbConfig))
 	err = json.NewDecoder(configBlob).Decode(&metadata)
 	p.Require().Nil(err)
 	art := &artifact.Artifact{ManifestMediaType: manifestMediaType, ExtraAttrs: metadata}
 
-	blob := ioutil.NopCloser(base64.NewDecoder(base64.StdEncoding, strings.NewReader(ormbIcon)))
-	p.regCli.On("PullBlob").Return(0, blob, nil)
+	blob := io.NopCloser(base64.NewDecoder(base64.StdEncoding, strings.NewReader(ormbIcon)))
+	p.regCli.On("PullBlob", mock.Anything, mock.Anything).Return(int64(0), blob, nil)
 	err = p.v1alpha1Parser.Parse(nil, art, content)
 	p.Require().Nil(err)
 	p.Len(art.ExtraAttrs, 12)
@@ -205,6 +247,7 @@ func (p *v1alpha1TestSuite) TestParse() {
 	p.Equal([]interface{}{map[string]interface{}{"name": "batch_size", "value": "32"}}, art.ExtraAttrs["hyperparameters"])
 	p.Equal("sha256:d923b93eadde0af5c639a972710a4d919066aba5d0dfbf4b9385099f70272da0", art.Icon)
 
+	// ormbManifestWithoutSkipList
 	// reset the mock
 	p.SetupTest()
 	manifest, _, err = distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(ormbManifestWithoutSkipList))
@@ -213,13 +256,13 @@ func (p *v1alpha1TestSuite) TestParse() {
 	p.Require().Nil(err)
 
 	metadata = map[string]interface{}{}
-	configBlob = ioutil.NopCloser(strings.NewReader(ormbConfig))
+	configBlob = io.NopCloser(strings.NewReader(ormbConfig))
 	err = json.NewDecoder(configBlob).Decode(&metadata)
 	p.Require().Nil(err)
 	art = &artifact.Artifact{ManifestMediaType: manifestMediaType, ExtraAttrs: metadata}
 
-	blob = ioutil.NopCloser(base64.NewDecoder(base64.StdEncoding, strings.NewReader(ormbIcon)))
-	p.regCli.On("PullBlob").Return(0, blob, nil)
+	blob = io.NopCloser(base64.NewDecoder(base64.StdEncoding, strings.NewReader(ormbIcon)))
+	p.regCli.On("PullBlob", mock.Anything, mock.Anything).Return(int64(0), blob, nil)
 	err = p.v1alpha1Parser.Parse(nil, art, content)
 	p.Require().Nil(err)
 	p.Len(art.ExtraAttrs, 13)
@@ -228,6 +271,7 @@ func (p *v1alpha1TestSuite) TestParse() {
 	p.Equal([]interface{}{map[string]interface{}{"name": "batch_size", "value": "32"}}, art.ExtraAttrs["hyperparameters"])
 	p.Equal("sha256:d923b93eadde0af5c639a972710a4d919066aba5d0dfbf4b9385099f70272da0", art.Icon)
 
+	// ormbManifestWithoutIcon
 	// reset the mock
 	p.SetupTest()
 	manifest, _, err = distribution.UnmarshalManifest(v1.MediaTypeImageManifest, []byte(ormbManifestWithoutIcon))
@@ -236,7 +280,7 @@ func (p *v1alpha1TestSuite) TestParse() {
 	p.Require().Nil(err)
 
 	metadata = map[string]interface{}{}
-	configBlob = ioutil.NopCloser(strings.NewReader(ormbConfig))
+	configBlob = io.NopCloser(strings.NewReader(ormbConfig))
 	err = json.NewDecoder(configBlob).Decode(&metadata)
 	p.Require().Nil(err)
 	art = &artifact.Artifact{ManifestMediaType: manifestMediaType, ExtraAttrs: metadata}

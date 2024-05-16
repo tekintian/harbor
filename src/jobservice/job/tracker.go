@@ -20,14 +20,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/goharbor/harbor/src/jobservice/common/list"
+	"github.com/gomodule/redigo/redis"
 
+	"github.com/goharbor/harbor/src/jobservice/common/list"
 	"github.com/goharbor/harbor/src/jobservice/common/rds"
 	"github.com/goharbor/harbor/src/jobservice/common/utils"
 	"github.com/goharbor/harbor/src/jobservice/errs"
 	"github.com/goharbor/harbor/src/jobservice/logger"
 	"github.com/goharbor/harbor/src/lib/errors"
-	"github.com/gomodule/redigo/redis"
 )
 
 const (
@@ -231,14 +231,17 @@ func (bt *basicTracker) CheckIn(message string) error {
 	current := Status(bt.jobStats.Info.Status)
 
 	bt.refresh(current, message)
-	err := bt.fireHookEvent(current, message)
-	err = bt.Update(
+	errFireHE := bt.fireHookEvent(current, message)
+	err := bt.Update(
 		// skip checkin data here
 		"check_in_at", now,
 		"update_time", now,
 	)
+	if err != nil {
+		return errors.Wrap(err, errFireHE.Error())
+	}
 
-	return err
+	return nil
 }
 
 // Run job
@@ -335,10 +338,20 @@ func (bt *basicTracker) Save() (err error) {
 	}
 	// Set update timestamp
 	args = append(args, "update_time", time.Now().Unix())
-	// Set the first revision
-	args = append(args, "revision", time.Now().Unix())
+	// Set the first revision if it is not set.
+	rev := time.Now().Unix()
+	if stats.Info.Revision > 0 {
+		rev = stats.Info.Revision
+	}
+	args = append(args, "revision", rev)
 
-	// ACK data is saved/updated not via tracker, so ignore the ACK saving
+	// For restoring if ACK is not nil.
+	if stats.Info.HookAck != nil {
+		ack := stats.Info.HookAck.JSON()
+		if len(ack) > 0 {
+			args = append(args, "ack")
+		}
+	}
 
 	// Do it in a transaction
 	err = conn.Send("MULTI")
@@ -522,7 +535,7 @@ func (bt *basicTracker) retrieve() error {
 		return err
 	}
 
-	if vals == nil || len(vals) == 0 {
+	if len(vals) == 0 {
 		return errs.NoObjectFoundError(bt.jobID)
 	}
 
@@ -536,10 +549,8 @@ func (bt *basicTracker) retrieve() error {
 		switch prop {
 		case "id":
 			res.Info.JobID = value
-			break
 		case "name":
 			res.Info.JobName = value
-			break
 		case "kind":
 			res.Info.JobKind = value
 		case "unique":
@@ -550,39 +561,28 @@ func (bt *basicTracker) retrieve() error {
 			res.Info.IsUnique = v
 		case "status":
 			res.Info.Status = value
-			break
 		case "ref_link":
 			res.Info.RefLink = value
-			break
 		case "enqueue_time":
 			res.Info.EnqueueTime = parseInt64(value)
-			break
 		case "update_time":
 			res.Info.UpdateTime = parseInt64(value)
-			break
 		case "run_at":
 			res.Info.RunAt = parseInt64(value)
-			break
 		case "check_in_at":
 			res.Info.CheckInAt = parseInt64(value)
-			break
 		case "check_in":
 			res.Info.CheckIn = "" // never read checkin placeholder data
-			break
 		case "cron_spec":
 			res.Info.CronSpec = value
-			break
 		case "web_hook_url":
 			res.Info.WebHookURL = value
-			break
 		case "die_at":
 			res.Info.DieAt = parseInt64(value)
 		case "upstream_job_id":
 			res.Info.UpstreamJobID = value
-			break
 		case "numeric_policy_id":
 			res.Info.NumericPID = parseInt64(value)
-			break
 		case "parameters":
 			params := make(Parameters)
 			if err := json.Unmarshal([]byte(value), &params); err == nil {
@@ -590,10 +590,8 @@ func (bt *basicTracker) retrieve() error {
 			} else {
 				logger.Error(errors.Wrap(err, "retrieve: tracker"))
 			}
-			break
 		case "revision":
 			res.Info.Revision = parseInt64(value)
-			break
 		case "ack":
 			ack := &ACK{}
 			if err := json.Unmarshal([]byte(value), ack); err == nil {

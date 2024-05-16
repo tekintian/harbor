@@ -17,10 +17,11 @@ package model
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/robfig/cron"
 	"strings"
 	"time"
 
+	"github.com/goharbor/harbor/src/common/utils"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
@@ -44,6 +45,8 @@ type Policy struct {
 	Enabled                   bool            `json:"enabled"`
 	CreationTime              time.Time       `json:"creation_time"`
 	UpdateTime                time.Time       `json:"update_time"`
+	Speed                     int32           `json:"speed"`
+	CopyByChunk               bool            `json:"copy_by_chunk"`
 }
 
 // IsScheduledTrigger returns true when the policy is scheduled trigger and enabled
@@ -78,37 +81,17 @@ func (p *Policy) Validate() error {
 	}
 
 	// valid the filters
-	for _, filter := range p.Filters {
-		switch filter.Type {
-		case model.FilterTypeResource, model.FilterTypeName, model.FilterTypeTag:
-			value, ok := filter.Value.(string)
-			if !ok {
-				return errors.New(nil).WithCode(errors.BadRequestCode).
-					WithMessage("the type of filter value isn't string")
-			}
-			if filter.Type == model.FilterTypeResource {
-				rt := value
-				if !(rt == model.ResourceTypeArtifact || rt == model.ResourceTypeImage || rt == model.ResourceTypeChart) {
-					return errors.New(nil).WithCode(errors.BadRequestCode).
-						WithMessage("invalid resource filter: %s", value)
-				}
-			}
-		case model.FilterTypeLabel:
-			labels, ok := filter.Value.([]interface{})
-			if !ok {
-				return errors.New(nil).WithCode(errors.BadRequestCode).
-					WithMessage("the type of label filter value isn't string slice")
-			}
-			for _, label := range labels {
-				_, ok := label.(string)
-				if !ok {
-					return errors.New(nil).WithCode(errors.BadRequestCode).
-						WithMessage("the type of label filter value isn't string slice")
-				}
-			}
-		default:
+	for _, f := range p.Filters {
+		if err := f.Validate(); err != nil {
+			return err
+		}
+	}
+
+	// valid the destination namespace
+	if len(p.DestNamespace) > 0 {
+		if !lib.RepositoryNameRe.MatchString(p.DestNamespace) {
 			return errors.New(nil).WithCode(errors.BadRequestCode).
-				WithMessage("invalid filter type")
+				WithMessage("invalid destination namespace: %s", p.DestNamespace)
 		}
 	}
 
@@ -121,9 +104,16 @@ func (p *Policy) Validate() error {
 				return errors.New(nil).WithCode(errors.BadRequestCode).
 					WithMessage("the cron string cannot be empty when the trigger type is %s", model.TriggerTypeScheduled)
 			}
-			if _, err := cron.Parse(p.Trigger.Settings.Cron); err != nil {
+			if _, err := utils.CronParser().Parse(p.Trigger.Settings.Cron); err != nil {
 				return errors.New(nil).WithCode(errors.BadRequestCode).
 					WithMessage("invalid cron string for scheduled trigger: %s", p.Trigger.Settings.Cron)
+			}
+			cronParts := strings.Split(p.Trigger.Settings.Cron, " ")
+			if cronParts[0] != "0" {
+				return errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("the 1st field (indicating Seconds of time) of the cron setting must be 0")
+			}
+			if cronParts[1] == "*" {
+				return errors.New(nil).WithCode(errors.BadRequestCode).WithMessage("* is not allowed for the Minutes field of the cron setting of replication policy")
 			}
 		default:
 			return errors.New(nil).WithCode(errors.BadRequestCode).
@@ -149,6 +139,8 @@ func (p *Policy) From(policy *replicationmodel.Policy) error {
 	p.Enabled = policy.Enabled
 	p.CreationTime = policy.CreationTime
 	p.UpdateTime = policy.UpdateTime
+	p.Speed = policy.Speed
+	p.CopyByChunk = policy.CopyByChunk
 
 	if policy.SrcRegistryID > 0 {
 		p.SrcRegistry = &model.Registry{
@@ -192,6 +184,8 @@ func (p *Policy) To() (*replicationmodel.Policy, error) {
 		ReplicateDeletion:         p.ReplicateDeletion,
 		CreationTime:              p.CreationTime,
 		UpdateTime:                p.UpdateTime,
+		Speed:                     p.Speed,
+		CopyByChunk:               p.CopyByChunk,
 	}
 	if p.SrcRegistry != nil {
 		policy.SrcRegistryID = p.SrcRegistry.ID
@@ -220,10 +214,11 @@ func (p *Policy) To() (*replicationmodel.Policy, error) {
 }
 
 type filter struct {
-	Type    string      `json:"type"`
-	Value   interface{} `json:"value"`
-	Kind    string      `json:"kind"`
-	Pattern string      `json:"pattern"`
+	Type       string      `json:"type"`
+	Value      interface{} `json:"value"`
+	Decoration string      `json:"decoration"`
+	Kind       string      `json:"kind"`
+	Pattern    string      `json:"pattern"`
 }
 
 type trigger struct {
@@ -251,8 +246,9 @@ func parseFilters(str string) ([]*model.Filter, error) {
 	filters := []*model.Filter{}
 	for _, item := range items {
 		filter := &model.Filter{
-			Type:  item.Type,
-			Value: item.Value,
+			Type:       item.Type,
+			Value:      item.Value,
+			Decoration: item.Decoration,
 		}
 		// keep backwards compatibility
 		if len(filter.Type) == 0 {

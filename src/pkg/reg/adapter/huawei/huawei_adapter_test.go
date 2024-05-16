@@ -1,18 +1,29 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package huawei
 
 import (
-	"os"
-	"strings"
 	"testing"
 
-	adp "github.com/goharbor/harbor/src/pkg/reg/adapter"
+	"github.com/stretchr/testify/assert"
+	gock "gopkg.in/h2non/gock.v1"
+
 	"github.com/goharbor/harbor/src/pkg/reg/model"
 )
 
-var hwAdapter adp.Adapter
-
-func init() {
-	var err error
+func getMockAdapter(t *testing.T) *adapter {
 	hwRegistry := &model.Registry{
 		ID:          1,
 		Name:        "Huawei",
@@ -24,15 +35,22 @@ func init() {
 		Status:      "",
 	}
 
-	hwAdapter, err = newAdapter(hwRegistry)
+	hwAdapter, err := newAdapter(hwRegistry)
 	if err != nil {
-		os.Exit(1)
+		t.Fatalf("Failed to call newAdapter(), reason=[%v]", err)
 	}
 
+	a := hwAdapter.(*adapter)
+	gock.InterceptClient(a.client.GetClient())
+	gock.InterceptClient(a.oriClient)
+
+	return a
 }
 
 func TestAdapter_Info(t *testing.T) {
-	info, err := hwAdapter.Info()
+	a := getMockAdapter(t)
+
+	info, err := a.Info()
 	if err != nil {
 		t.Error(err)
 	}
@@ -40,6 +58,17 @@ func TestAdapter_Info(t *testing.T) {
 }
 
 func TestAdapter_PrepareForPush(t *testing.T) {
+	defer gock.Off()
+	gock.Observe(gock.DumpRequest)
+
+	mockRequest().Get("/dockyard/v2/namespaces/domain_repo_new").
+		Reply(200).BodyString("{}")
+
+	mockRequest().Post("/dockyard/v2/namespaces").BodyString(`{"namespace":"domain_repo_new"}`).
+		Reply(200)
+
+	a := getMockAdapter(t)
+
 	repository := &model.Repository{
 		Name:     "domain_repo_new",
 		Metadata: make(map[string]interface{}),
@@ -49,20 +78,17 @@ func TestAdapter_PrepareForPush(t *testing.T) {
 		Repository: repository,
 	}
 	resource.Metadata = metadata
-	err := hwAdapter.PrepareForPush([]*model.Resource{resource})
-	if err != nil {
-		if strings.HasPrefix(err.Error(), "[401]") {
-			t.Log("huawei ak/sk is not available", err.Error())
-		} else {
-			t.Error(err)
-		}
-	} else {
-		t.Log("success prepare for push")
-	}
+	err := a.PrepareForPush([]*model.Resource{resource})
+	assert.NoError(t, err)
 }
 
 func TestAdapter_HealthCheck(t *testing.T) {
-	health, err := hwAdapter.HealthCheck()
+	defer gock.Off()
+	gock.Observe(gock.DumpRequest)
+
+	a := getMockAdapter(t)
+
+	health, err := a.HealthCheck()
 	if err != nil {
 		t.Error(err)
 	}

@@ -12,18 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { NgModule } from "@angular/core";
-import { SharedModule } from "../../../shared/shared.module";
-import { NewScannerModalComponent } from "./scanner/new-scanner-modal/new-scanner-modal.component";
-import { ScannerMetadataComponent } from "./scanner/scanner-metadata/scanner-metadata.component";
-import { NewScannerFormComponent } from "./scanner/new-scanner-form/new-scanner-form.component";
-import { RouterModule, Routes } from "@angular/router";
-import { ConfigurationScannerComponent } from "./scanner/config-scanner.component";
-import { VulnerabilityConfigComponent } from "./vulnerability/vulnerability-config.component";
-import { InterrogationServicesComponent } from "./interrogation-services.component";
-import { ScanAllRepoService } from "./vulnerability/scanAll.service";
-import { ScanApiDefaultRepository, ScanApiRepository } from "./vulnerability/scanAll.api.repository";
-
+import { NgModule } from '@angular/core';
+import { SharedModule } from '../../../shared/shared.module';
+import { NewScannerModalComponent } from './scanner/new-scanner-modal/new-scanner-modal.component';
+import { ScannerMetadataComponent } from './scanner/scanner-metadata/scanner-metadata.component';
+import { NewScannerFormComponent } from './scanner/new-scanner-form/new-scanner-form.component';
+import { RouterModule, Routes } from '@angular/router';
+import { ConfigurationScannerComponent } from './scanner/config-scanner.component';
+import { VulnerabilityConfigComponent } from './vulnerability/vulnerability-config.component';
+import { InterrogationServicesComponent } from './interrogation-services.component';
+import { ScanAllRepoService } from './vulnerability/scanAll.service';
+import {
+    ScanApiDefaultRepository,
+    ScanApiRepository,
+} from './vulnerability/scanAll.api.repository';
+import { VulnerabilitySummaryComponent } from './vulnerability-database/vulnerability-summary/vulnerability-summary.component';
+import { VulnerabilityFilterComponent } from './vulnerability-database/vulnerability-filter/vulnerability-filter.component';
+import { SecurityHubComponent } from './vulnerability-database/security-hub.component';
+import { SingleBarComponent } from './vulnerability-database/single-bar/single-bar.component';
 
 const routes: Routes = [
     {
@@ -32,37 +38,41 @@ const routes: Routes = [
         children: [
             {
                 path: 'scanners',
-                component: ConfigurationScannerComponent
+                component: ConfigurationScannerComponent,
             },
             {
                 path: 'vulnerability',
-                component: VulnerabilityConfigComponent
+                component: VulnerabilityConfigComponent,
+            },
+            {
+                path: 'security-hub',
+                component: SecurityHubComponent,
             },
             {
                 path: '',
-                redirectTo: 'scanners',
-                pathMatch: 'full'
+                redirectTo: 'security-hub',
+                pathMatch: 'full',
             },
-        ]
-    }
+        ],
+    },
 ];
 @NgModule({
-    imports: [
-        SharedModule,
-        RouterModule.forChild(routes),
-    ],
+    imports: [SharedModule, RouterModule.forChild(routes)],
     declarations: [
         NewScannerModalComponent,
         NewScannerFormComponent,
         ScannerMetadataComponent,
         ConfigurationScannerComponent,
         InterrogationServicesComponent,
-        VulnerabilityConfigComponent
+        VulnerabilityConfigComponent,
+        VulnerabilityFilterComponent,
+        VulnerabilitySummaryComponent,
+        SecurityHubComponent,
+        SingleBarComponent,
     ],
     providers: [
         ScanAllRepoService,
-        {provide: ScanApiRepository, useClass: ScanApiDefaultRepository },
-    ]
+        { provide: ScanApiRepository, useClass: ScanApiDefaultRepository },
+    ],
 })
-export class InterrogationServicesModule {
-}
+export class InterrogationServicesModule {}

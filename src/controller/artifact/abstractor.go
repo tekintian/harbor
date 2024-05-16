@@ -18,17 +18,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/q"
 
 	"github.com/docker/distribution/manifest/manifestlist"
 	"github.com/docker/distribution/manifest/schema1"
 	"github.com/docker/distribution/manifest/schema2"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/goharbor/harbor/src/controller/artifact/processor"
+	"github.com/goharbor/harbor/src/controller/artifact/processor/wasm"
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/artifact"
 	"github.com/goharbor/harbor/src/pkg/blob"
 	"github.com/goharbor/harbor/src/pkg/registry"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // Abstractor abstracts the metadata of artifact
@@ -40,7 +43,7 @@ type Abstractor interface {
 // NewAbstractor creates a new abstractor
 func NewAbstractor() Abstractor {
 	return &abstractor{
-		artMgr:  artifact.Mgr,
+		artMgr:  pkg.ArtifactMgr,
 		blobMgr: blob.Mgr,
 		regCli:  registry.Cli,
 	}
@@ -124,6 +127,19 @@ func (a *abstractor) abstractManifestV2Metadata(artifact *artifact.Artifact, con
 	}
 	// use the "manifest.config.mediatype" as the media type of the artifact
 	artifact.MediaType = manifest.Config.MediaType
+	if manifest.Annotations[wasm.AnnotationVariantKey] == wasm.AnnotationVariantValue || manifest.Annotations[wasm.AnnotationHandlerKey] == wasm.AnnotationHandlerValue {
+		artifact.MediaType = wasm.MediaType
+	}
+	/*
+		https://github.com/opencontainers/distribution-spec/blob/v1.1.0/spec.md#listing-referrers
+		For referrers list, if the artifactType is empty or missing in the image manifest, the value of artifactType MUST be set to the config descriptor mediaType value
+	*/
+	if manifest.ArtifactType != "" {
+		artifact.ArtifactType = manifest.ArtifactType
+	} else {
+		artifact.ArtifactType = manifest.Config.MediaType
+	}
+
 	// set size
 	artifact.Size = int64(len(content)) + manifest.Config.Size
 	for _, layer := range manifest.Layers {
@@ -143,6 +159,16 @@ func (a *abstractor) abstractIndexMetadata(ctx context.Context, art *artifact.Ar
 	index := &v1.Index{}
 	if err := json.Unmarshal(content, index); err != nil {
 		return err
+	}
+
+	/*
+		https://github.com/opencontainers/distribution-spec/blob/v1.1.0/spec.md#listing-referrers
+		For referrers list, If the artifactType is empty or missing in an index, the artifactType MUST be omitted.
+	*/
+	if index.ArtifactType != "" {
+		art.ArtifactType = index.ArtifactType
+	} else {
+		art.ArtifactType = ""
 	}
 
 	// set annotations

@@ -1,21 +1,40 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package robot
 
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
+	"time"
+
 	rbac_project "github.com/goharbor/harbor/src/common/rbac/project"
 	"github.com/goharbor/harbor/src/common/utils"
 	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/lib/retry"
+	"github.com/goharbor/harbor/src/pkg"
 	"github.com/goharbor/harbor/src/pkg/permission/types"
 	"github.com/goharbor/harbor/src/pkg/project"
 	"github.com/goharbor/harbor/src/pkg/rbac"
 	rbac_model "github.com/goharbor/harbor/src/pkg/rbac/model"
 	robot "github.com/goharbor/harbor/src/pkg/robot"
 	"github.com/goharbor/harbor/src/pkg/robot/model"
-	"time"
 )
 
 var (
@@ -55,7 +74,7 @@ type controller struct {
 func NewController() Controller {
 	return &controller{
 		robotMgr: robot.Mgr,
-		proMgr:   project.Mgr,
+		proMgr:   pkg.ProjectMgr,
 		rbacMgr:  rbac.Mgr,
 	}
 }
@@ -83,17 +102,19 @@ func (d *controller) Create(ctx context.Context, r *Robot) (int64, string, error
 	var expiresAt int64
 	if r.Duration == -1 {
 		expiresAt = -1
-	} else if r.Duration == 0 {
-		// system default robot duration
-		r.Duration = int64(config.RobotTokenDuration(ctx))
-		expiresAt = time.Now().AddDate(0, 0, config.RobotTokenDuration(ctx)).Unix()
 	} else {
-		expiresAt = time.Now().AddDate(0, 0, int(r.Duration)).Unix()
+		durationStr := strconv.FormatInt(r.Duration, 10)
+		duration, err := strconv.Atoi(durationStr)
+		if err != nil {
+			return 0, "", err
+		}
+		expiresAt = time.Now().AddDate(0, 0, duration).Unix()
 	}
 
-	pwd := utils.GenerateRandomString()
-	salt := utils.GenerateRandomString()
-	secret := utils.Encrypt(pwd, salt, utils.SHA256)
+	secret, pwd, salt, err := CreateSec()
+	if err != nil {
+		return 0, "", err
+	}
 
 	name := r.Name
 	// for the project level robot, set the name pattern as projectname+robotname, and + is a illegal character.
@@ -141,7 +162,7 @@ func (d *controller) Update(ctx context.Context, r *Robot, option *Option) error
 	}
 	// update the permission
 	if option != nil && option.WithPermission {
-		if err := d.rbacMgr.DeletePermissionsByRole(ctx, ROBOTTYPE, r.ID); err != nil {
+		if err := d.rbacMgr.DeletePermissionsByRole(ctx, ROBOTTYPE, r.ID); err != nil && !errors.IsNotFoundErr(err) {
 			return err
 		}
 		if err := d.createPermission(ctx, r); err != nil {
@@ -351,4 +372,45 @@ func (d *controller) toScope(ctx context.Context, p *Permission) (string, error)
 		return fmt.Sprintf("/project/%d", pro.ProjectID), nil
 	}
 	return "", errors.New(nil).WithMessage("unknown robot kind").WithCode(errors.BadRequestCode)
+}
+
+func CreateSec(salt ...string) (string, string, string, error) {
+	var secret, pwd string
+	options := []retry.Option{
+		retry.InitialInterval(time.Millisecond * 500),
+		retry.MaxInterval(time.Second * 10),
+		retry.Timeout(time.Minute),
+		retry.Callback(func(err error, sleep time.Duration) {
+			log.Debugf("failed to generate secret for robot, retry after %s : %v", sleep, err)
+		}),
+	}
+
+	if err := retry.Retry(func() error {
+		pwd = utils.GenerateRandomString()
+		if !IsValidSec(pwd) {
+			return errors.New(nil).WithMessage("invalid secret format")
+		}
+		return nil
+	}, options...); err != nil {
+		return "", "", "", errors.Wrap(err, "failed to generate an valid random secret for robot in one minute, please try again")
+	}
+
+	var saltTmp string
+	if len(salt) != 0 {
+		saltTmp = salt[0]
+	} else {
+		saltTmp = utils.GenerateRandomString()
+	}
+	secret = utils.Encrypt(pwd, saltTmp, utils.SHA256)
+	return secret, pwd, saltTmp, nil
+}
+
+var (
+	hasLower  = regexp.MustCompile(`[a-z]`)
+	hasUpper  = regexp.MustCompile(`[A-Z]`)
+	hasNumber = regexp.MustCompile(`\d`)
+)
+
+func IsValidSec(secret string) bool {
+	return len(secret) >= 8 && len(secret) <= 128 && hasLower.MatchString(secret) && hasUpper.MatchString(secret) && hasNumber.MatchString(secret)
 }

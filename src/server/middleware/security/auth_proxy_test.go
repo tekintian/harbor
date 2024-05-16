@@ -17,8 +17,17 @@ package security
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/api/authentication/v1beta1"
+
 	"github.com/goharbor/harbor/src/common"
-	"github.com/goharbor/harbor/src/common/utils/test"
 	_ "github.com/goharbor/harbor/src/core/auth/authproxy"
 	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/config"
@@ -26,19 +35,10 @@ import (
 	"github.com/goharbor/harbor/src/lib/orm"
 	_ "github.com/goharbor/harbor/src/pkg/config/db"
 	_ "github.com/goharbor/harbor/src/pkg/config/inmemory"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"io/ioutil"
-	"k8s.io/api/authentication/v1beta1"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"testing"
 )
 
 func TestAuthProxy(t *testing.T) {
 	config.Init()
-	test.InitDatabaseFromEnv()
 	authProxy := &authProxy{}
 
 	server, err := newAuthProxyTestServer()
@@ -67,7 +67,8 @@ func TestAuthProxy(t *testing.T) {
 	// No onboard
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1/v2", nil)
 	require.Nil(t, err)
-	req = req.WithContext(lib.WithAuthMode(req.Context(), common.HTTPAuth))
+	ormCtx := orm.Context()
+	req = req.WithContext(lib.WithAuthMode(ormCtx, common.HTTPAuth))
 	req.SetBasicAuth("tokenreview$administrator@vsphere.local", "reviEwt0k3n")
 	ctx := authProxy.Generate(req)
 	assert.NotNil(t, ctx)
@@ -88,7 +89,7 @@ func newAuthProxyTestServer() (*httptest.Server, error) {
 		}
 
 		var review v1beta1.TokenReview
-		bodyData, _ := ioutil.ReadAll(r.Body)
+		bodyData, _ := io.ReadAll(r.Body)
 		if err := json.Unmarshal(bodyData, &review); err != nil {
 			http.Error(w, fmt.Sprintf("failed to decode body: %v", err), http.StatusBadRequest)
 			return

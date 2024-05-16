@@ -11,30 +11,49 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import { Injectable } from "@angular/core";
+import { Injectable } from '@angular/core';
+import { MarkdownPipe } from 'ngx-markdown/src/markdown.pipe';
 
 const EVENT_TYPES_TEXT_MAP = {
-  'REPLICATION': 'Replication finished',
-  'PUSH_ARTIFACT': 'Artifact pushed',
-  'PULL_ARTIFACT': 'Artifact pulled',
-  'DELETE_ARTIFACT': 'Artifact deleted',
-  'DOWNLOAD_CHART': 'Chart downloaded',
-  'UPLOAD_CHART': 'Chart uploaded',
-  'DELETE_CHART': 'Chart deleted',
-  'QUOTA_EXCEED': 'Quota exceed',
-  'QUOTA_WARNING': 'Quota near threshold',
-  'SCANNING_FAILED': 'Scanning failed',
-  'SCANNING_COMPLETED': 'Scanning finished',
-  'TAG_RETENTION': 'Tag retention finished',
+    REPLICATION: 'Replication status changed',
+    PUSH_ARTIFACT: 'Artifact pushed',
+    PULL_ARTIFACT: 'Artifact pulled',
+    DELETE_ARTIFACT: 'Artifact deleted',
+    DOWNLOAD_CHART: 'Chart downloaded',
+    UPLOAD_CHART: 'Chart uploaded',
+    DELETE_CHART: 'Chart deleted',
+    QUOTA_EXCEED: 'Quota exceed',
+    QUOTA_WARNING: 'Quota near threshold',
+    SCANNING_FAILED: 'Scanning failed',
+    SCANNING_STOPPED: 'Scanning stopped',
+    SCANNING_COMPLETED: 'Scanning finished',
+    TAG_RETENTION: 'Tag retention finished',
 };
+
+export const PAYLOAD_FORMATS: string[] = ['Default', 'CloudEvents'];
+
+export const PAYLOAD_FORMAT_I18N_MAP = {
+    [PAYLOAD_FORMATS[0]]: 'SCANNER.DEFAULT',
+    [PAYLOAD_FORMATS[1]]: 'WEBHOOK.CLOUD_EVENT',
+};
+
+export enum WebhookType {
+    HTTP = 'http',
+    SLACK = 'slack',
+}
+
+export enum VendorType {
+    WEBHOOK = 'WEBHOOK',
+    SLACK = 'SLACK',
+}
 
 @Injectable()
 export class ProjectWebhookService {
-  constructor() { }
-  public eventTypeToText(eventType: string): string {
-    if (EVENT_TYPES_TEXT_MAP[eventType]) {
-      return EVENT_TYPES_TEXT_MAP[eventType];
+    constructor() {}
+    public eventTypeToText(eventType: string): string {
+        if (EVENT_TYPES_TEXT_MAP[eventType]) {
+            return EVENT_TYPES_TEXT_MAP[eventType];
+        }
+        return eventType;
     }
-    return eventType;
-  }
 }

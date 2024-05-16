@@ -1,4 +1,4 @@
-// Copyright 2018 Project Harbor Authors
+// Copyright Project Harbor Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,33 +16,37 @@ package handler
 
 import (
 	"context"
-	"github.com/goharbor/harbor/src/controller/blob"
 
 	"github.com/go-openapi/runtime/middleware"
+
 	"github.com/goharbor/harbor/src/common/security/local"
+	"github.com/goharbor/harbor/src/controller/blob"
 	"github.com/goharbor/harbor/src/controller/project"
 	"github.com/goharbor/harbor/src/controller/repository"
 	"github.com/goharbor/harbor/src/lib/q"
+	"github.com/goharbor/harbor/src/pkg/systemartifact"
 	"github.com/goharbor/harbor/src/server/v2.0/models"
 	operation "github.com/goharbor/harbor/src/server/v2.0/restapi/operations/statistic"
 )
 
 func newStatisticAPI() *statisticAPI {
 	return &statisticAPI{
-		proCtl:  project.Ctl,
-		repoCtl: repository.Ctl,
-		blobCtl: blob.Ctl,
+		proCtl:            project.Ctl,
+		repoCtl:           repository.Ctl,
+		blobCtl:           blob.Ctl,
+		systemArtifactMgr: systemartifact.Mgr,
 	}
 }
 
 type statisticAPI struct {
 	BaseAPI
-	proCtl  project.Controller
-	repoCtl repository.Controller
-	blobCtl blob.Controller
+	proCtl            project.Controller
+	repoCtl           repository.Controller
+	blobCtl           blob.Controller
+	systemArtifactMgr systemartifact.Manager
 }
 
-func (s *statisticAPI) GetStatistic(ctx context.Context, params operation.GetStatisticParams) middleware.Responder {
+func (s *statisticAPI) GetStatistic(ctx context.Context, _ operation.GetStatisticParams) middleware.Responder {
 	if err := s.RequireAuthenticated(ctx); err != nil {
 		return s.SendError(ctx, err)
 	}
@@ -96,8 +100,13 @@ func (s *statisticAPI) GetStatistic(ctx context.Context, params operation.GetSta
 		if err != nil {
 			return s.SendError(ctx, err)
 		}
-		statistic.TotalStorageConsumption = sum
 
+		sysArtifactStorageSize, err := s.systemArtifactMgr.GetStorageSize(ctx)
+
+		if err != nil {
+			return s.SendError(ctx, err)
+		}
+		statistic.TotalStorageConsumption = sum + sysArtifactStorageSize
 	} else {
 		var privProjectIDs []interface{}
 		if sc, ok := securityCtx.(*local.SecurityContext); ok && sc.IsAuthenticated() {

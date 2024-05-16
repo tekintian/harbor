@@ -15,13 +15,15 @@
 package dao
 
 import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/blob/models"
 	htesting "github.com/goharbor/harbor/src/testing"
-	"github.com/stretchr/testify/suite"
-	"testing"
-	"time"
 )
 
 type DaoTestSuite struct {
@@ -267,7 +269,7 @@ func (suite *DaoTestSuite) TestFindBlobsShouldUnassociatedWithProject() {
 		artifact1 := suite.DigestString()
 		artifact2 := suite.DigestString()
 
-		sql := `INSERT INTO artifact ("type", media_type, manifest_media_type, digest, project_id, repository_id, repository_name) VALUES ('image', 'media_type', 'manifest_media_type', ?, ?, ?, 'library/hello-world')`
+		sql := `INSERT INTO artifact ("type", media_type, manifest_media_type, digest, project_id, repository_id, repository_name, artifact_type) VALUES ('image', 'media_type', 'manifest_media_type', ?, ?, ?, 'library/hello-world', 'artifact_type')`
 		suite.ExecSQL(sql, artifact1, projectID, 10)
 		suite.ExecSQL(sql, artifact2, projectID, 10)
 
@@ -455,6 +457,31 @@ func (suite *DaoTestSuite) TestGetBlobsNotRefedByProjectBlob() {
 	blobs, err = suite.dao.GetBlobsNotRefedByProjectBlob(ctx, 2)
 	suite.Require().Nil(err)
 	suite.Require().Equal(0, len(blobs))
+}
+
+func (suite *DaoTestSuite) GetBlobsByArtDigest() {
+	ctx := suite.Context()
+	afDigest := suite.DigestString()
+	blobs, err := suite.dao.GetBlobsByArtDigest(ctx, afDigest)
+	suite.Nil(err)
+	suite.Require().Equal(0, len(blobs))
+
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: afDigest})
+	blobDigest1 := suite.DigestString()
+	blobDigest2 := suite.DigestString()
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: blobDigest1})
+	suite.dao.CreateBlob(ctx, &models.Blob{Digest: blobDigest2})
+
+	_, err = suite.dao.CreateArtifactAndBlob(ctx, afDigest, afDigest)
+	suite.Nil(err)
+	_, err = suite.dao.CreateArtifactAndBlob(ctx, afDigest, blobDigest1)
+	suite.Nil(err)
+	_, err = suite.dao.CreateArtifactAndBlob(ctx, afDigest, blobDigest2)
+	suite.Nil(err)
+
+	blobs, err = suite.dao.GetBlobsByArtDigest(ctx, afDigest)
+	suite.Nil(err)
+	suite.Require().Equal(3, len(blobs))
 }
 
 func TestDaoTestSuite(t *testing.T) {

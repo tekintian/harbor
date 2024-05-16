@@ -1,14 +1,29 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package notifier
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/orm"
 	"reflect"
 	"strings"
 	"sync"
 
 	"github.com/goharbor/harbor/src/lib/log"
+	"github.com/goharbor/harbor/src/lib/orm"
 )
 
 // HandlerIndexer is setup the relationship between the handler type and
@@ -68,11 +83,11 @@ func NewNotificationWatcher() *NotificationWatcher {
 // Handle the related topic with the specified handler.
 func (nw *NotificationWatcher) Handle(topic string, handler NotificationHandler) error {
 	if strings.TrimSpace(topic) == "" {
-		return errors.New("Empty topic is not supported")
+		return errors.New("empty topic is not supported")
 	}
 
 	if handler == nil {
-		return errors.New("Nil handler can not be registered")
+		return errors.New("nil handler can not be registered")
 	}
 
 	defer nw.Unlock()
@@ -81,7 +96,7 @@ func (nw *NotificationWatcher) Handle(topic string, handler NotificationHandler)
 	t := reflect.TypeOf(handler).String()
 	if indexer, ok := nw.handlers[topic]; ok {
 		if _, existing := indexer[t]; existing {
-			return fmt.Errorf("Topic %s has already register the handler with type %s", topic, t)
+			return fmt.Errorf("topic %s has already register the handler with type %s", topic, t)
 		}
 
 		indexer[t] = handler
@@ -109,7 +124,7 @@ func (nw *NotificationWatcher) Handle(topic string, handler NotificationHandler)
 // then revoke the whole topic, otherwise only revoke the specified handler.
 func (nw *NotificationWatcher) UnHandle(topic string, handler string) error {
 	if strings.TrimSpace(topic) == "" {
-		return errors.New("Empty topic is not supported")
+		return errors.New("empty topic is not supported")
 	}
 
 	defer nw.Unlock()
@@ -156,13 +171,13 @@ func (nw *NotificationWatcher) UnHandle(topic string, handler string) error {
 		}
 	}
 
-	return fmt.Errorf("Failed to revoke handler %s with topic %s", handler, topic)
+	return fmt.Errorf("failed to revoke handler %s with topic %s", handler, topic)
 }
 
 // Notify that notification is coming.
-func (nw *NotificationWatcher) Notify(notification Notification) error {
+func (nw *NotificationWatcher) Notify(ctx context.Context, notification Notification) error {
 	if strings.TrimSpace(notification.Topic) == "" {
-		return errors.New("Empty topic can not be notified")
+		return errors.New("empty topic can not be notified")
 	}
 
 	defer nw.RUnlock()
@@ -174,7 +189,7 @@ func (nw *NotificationWatcher) Notify(notification Notification) error {
 		handlers = []NotificationHandler{}
 	)
 	if indexer, ok = nw.handlers[notification.Topic]; !ok {
-		return fmt.Errorf("No handlers registered for handling topic %s", notification.Topic)
+		return fmt.Errorf("no handlers registered for handling topic %s", notification.Topic)
 	}
 
 	for _, h := range indexer {
@@ -198,11 +213,11 @@ func (nw *NotificationWatcher) Notify(notification Notification) error {
 						<-ch
 					}
 				}()
-				if err := hd.Handle(orm.Context(), notification.Value); err != nil {
+				if err := hd.Handle(orm.Copy(ctx), notification.Value); err != nil {
 					// Currently, we just log the error
 					log.Errorf("Error occurred when triggering handler %s of topic %s: %s\n", reflect.TypeOf(hd).String(), notification.Topic, err.Error())
 				} else {
-					log.Infof("Handle notification with Handler '%s' on topic '%s': %s\n", hd.Name(), notification.Topic, notification.Value)
+					log.Debugf("Handle notification with Handler '%s' on topic '%s': %+v\n", hd.Name(), notification.Topic, notification.Value)
 				}
 			}()
 		}(h, handlerChan)
@@ -222,8 +237,8 @@ func UnSubscribe(topic string, handler string) error {
 }
 
 // Publish is a wrapper utility method for NotificationWatcher.notify()
-func Publish(topic string, value interface{}) error {
-	return notificationWatcher.Notify(Notification{
+func Publish(ctx context.Context, topic string, value interface{}) error {
+	return notificationWatcher.Notify(ctx, Notification{
 		Topic: topic,
 		Value: value,
 	})

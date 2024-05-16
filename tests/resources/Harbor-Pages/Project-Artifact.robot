@@ -40,7 +40,7 @@ Add A New Tag
 
 Delete A Tag
     [Arguments]  ${tag}
-    Retry Element Click   xpath=//clr-dg-row[contains(.,'${tag}')]//clr-checkbox-wrapper//label[contains(@class,'clr-control-label')]
+    Retry Element Click   xpath=//clr-dg-row[contains(.,'${tag}')]//div[contains(@class,'clr-checkbox-wrapper')]//label[contains(@class,'clr-control-label')]
     Retry Double Keywords When Error  Retry Element Click    ${delete_tag_button}  Retry Wait Until Page Contains Element  ${dialog_delete_button}
     Retry Double Keywords When Error  Retry Element Click  ${dialog_delete_button}  Should Not Contain Tag  ${tag}
 
@@ -49,3 +49,17 @@ Should Contain Artifact
 
 Should Not Contain Any Artifact
     Retry Wait Until Page Not Contains Element   xpath=//artifact-list-tab//clr-dg-row
+
+Get The Specific Artifact
+    [Arguments]  ${project_name}  ${repo_name}  ${reference}
+    ${cmd}=  Set Variable  curl -u ${HARBOR_ADMIN}:${HARBOR_PASSWORD} -s --insecure -H "Content-Type: application/json" -X GET "${HARBOR_URL}/api/v2.0/projects/${project_name}/repositories/${repo_name}/artifacts/${reference}?page=1&page_size=10&with_tag=true&with_label=true&with_scan_overview=true&with_accessory=true&with_signature=true&with_immutable_status=true"
+    ${rc}  ${output}=  Run And Return Rc And Output  ${cmd}
+    [Return]  ${output}
+
+Refresh Artifacts
+    Retry Element Click  ${artifact_list_refresh_btn}
+
+Delete Accessory By Aeecssory XPath
+    [Arguments]  ${aeecssory_action_xpath}
+    Retry Double Keywords When Error  Retry Button Click  ${aeecssory_action_xpath}  Retry Button Click  ${delete_accessory_btn}
+    Retry Button Click  //button[text()=' DELETE ']

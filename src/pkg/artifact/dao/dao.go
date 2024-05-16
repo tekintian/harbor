@@ -18,8 +18,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
-	beegoorm "github.com/astaxie/beego/orm"
+	beegoorm "github.com/beego/beego/v2/client/orm"
+
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
@@ -42,6 +44,8 @@ type DAO interface {
 	Delete(ctx context.Context, id int64) (err error)
 	// Update updates the artifact. Only the properties specified by "props" will be updated if it is set
 	Update(ctx context.Context, artifact *Artifact, props ...string) (err error)
+	// UpdatePullTime updates artifact pull time by ID.
+	UpdatePullTime(ctx context.Context, id int64, pullTime time.Time) (err error)
 	// CreateReference creates the artifact reference
 	CreateReference(ctx context.Context, reference *ArtifactReference) (id int64, err error)
 	// ListReferences lists the artifact references according to the query
@@ -53,22 +57,26 @@ type DAO interface {
 }
 
 const (
-	// both tagged and untagged artifacts
-	both = `IN (
-		SELECT DISTINCT art.id FROM artifact art
-		LEFT JOIN tag ON art.id=tag.artifact_id
-		LEFT JOIN artifact_reference ref ON art.id=ref.child_id
-		WHERE tag.id IS NOT NULL OR ref.id IS NULL)`
-	// only untagged artifacts
-	untagged = `IN (
-		SELECT DISTINCT art.id FROM artifact art
-		LEFT JOIN tag ON art.id=tag.artifact_id
-		WHERE tag.id IS NULL)`
-	// only tagged artifacts
-	tagged = `IN (
-		SELECT DISTINCT art.id FROM artifact art
-		JOIN tag ON art.id=tag.artifact_id
-		WHERE tag.id IS NOT NULL)`
+	// the QuerySetter of beego doesn't support "EXISTS" directly, use qs.FilterRaw("id", "=id AND xxx") to workaround the limitation
+	// base filter: both tagged and untagged artifacts
+	both = `=id AND (
+		EXISTS (SELECT 1 FROM tag WHERE tag.artifact_id = T0.id)
+		OR 
+		NOT EXISTS (SELECT 1 FROM artifact_reference ref WHERE ref.child_id = T0.id)
+	)`
+	// tag filter: only untagged artifacts
+	// the "untagged" filter is based on "base" filter, so we consider the tag only
+	untagged = `=id AND NOT EXISTS(
+		SELECT 1 FROM tag WHERE tag.artifact_id = T0.id
+	)`
+	// tag filter: only tagged artifacts
+	tagged = `=id AND EXISTS (
+		SELECT 1 FROM tag WHERE tag.artifact_id = T0.id
+	)`
+	// accessory filter: filter out the accessory
+	notacc = `=id AND NOT EXISTS (
+		SELECT 1 FROM artifact_accessory aa WHERE aa.artifact_id = T0.id
+	)`
 )
 
 // New returns an instance of the default DAO
@@ -100,6 +108,7 @@ func (d *dao) List(ctx context.Context, query *q.Query) ([]*Artifact, error) {
 	if _, err = qs.All(&artifacts); err != nil {
 		return nil, err
 	}
+
 	return artifacts, nil
 }
 func (d *dao) Get(ctx context.Context, id int64) (*Artifact, error) {
@@ -180,6 +189,7 @@ func (d *dao) Update(ctx context.Context, artifact *Artifact, props ...string) e
 	if err != nil {
 		return err
 	}
+
 	n, err := ormer.Update(artifact, props...)
 	if err != nil {
 		return err
@@ -189,6 +199,27 @@ func (d *dao) Update(ctx context.Context, artifact *Artifact, props ...string) e
 	}
 	return nil
 }
+
+func (d *dao) UpdatePullTime(ctx context.Context, id int64, pullTime time.Time) error {
+	ormer, err := orm.FromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	// can only be retained to the second if not format
+	formatPullTime := pullTime.Format("2006-01-02 15:04:05.999999")
+	// update db only if pull_time is null or pull_time < (in-coming)pullTime
+	sql := "UPDATE artifact SET pull_time = ? WHERE id = ? AND (pull_time IS NULL OR pull_time < ?)"
+	args := []interface{}{formatPullTime, id, formatPullTime}
+
+	_, err = ormer.Raw(sql, args...).Exec()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (d *dao) CreateReference(ctx context.Context, reference *ArtifactReference) (int64, error) {
 	ormer, err := orm.FromContext(ctx)
 	if err != nil {
@@ -268,12 +299,16 @@ func querySetter(ctx context.Context, query *q.Query) (beegoorm.QuerySeter, erro
 	if err != nil {
 		return nil, err
 	}
+	qs, err = setAccessoryQuery(qs, query)
+	if err != nil {
+		return nil, err
+	}
 	return qs, nil
 }
 
 // handle q=base=*
 // when "q=base=*" is specified in the query, the base collection is the all artifacts of database,
-// otherwise the base connection is only the tagged artifacts and untagged artifacts that aren't
+// otherwise the base collection is only the tagged artifacts and untagged artifacts that aren't
 // referenced by others
 func setBaseQuery(qs beegoorm.QuerySeter, query *q.Query) (beegoorm.QuerySeter, error) {
 	if query == nil || len(query.Keywords) == 0 {
@@ -377,5 +412,15 @@ func setLabelQuery(qs beegoorm.QuerySeter, query *q.Query) (beegoorm.QuerySeter,
 		collections = append(collections, fmt.Sprintf(`SELECT artifact_id FROM label_reference WHERE label_id=%d`, labelID))
 	}
 	qs = qs.FilterRaw("id", fmt.Sprintf(`IN (%s)`, strings.Join(collections, " INTERSECT ")))
+	return qs, nil
+}
+
+// filter out the accessory for results
+func setAccessoryQuery(qs beegoorm.QuerySeter, query *q.Query) (beegoorm.QuerySeter, error) {
+	if query == nil {
+		return qs, nil
+	}
+
+	qs = qs.FilterRaw("id", notacc)
 	return qs, nil
 }

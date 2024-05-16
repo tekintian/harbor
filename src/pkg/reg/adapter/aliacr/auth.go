@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package aliacr
 
 import (
@@ -7,6 +21,7 @@ import (
 	"time"
 
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/cr"
+
 	"github.com/goharbor/harbor/src/common/http/modifier"
 	"github.com/goharbor/harbor/src/lib/log"
 )
@@ -50,14 +65,17 @@ func (a *aliyunAuthCredential) Modify(r *http.Request) (err error) {
 		}
 
 		var tokenRequest = cr.CreateGetAuthorizationTokenRequest()
-		var tokenResponse = cr.CreateGetAuthorizationTokenResponse()
+		var tokenResponse *cr.GetAuthorizationTokenResponse
 		tokenRequest.SetDomain(fmt.Sprintf(endpointTpl, a.region))
 		tokenResponse, err = client.GetAuthorizationToken(tokenRequest)
 		if err != nil {
 			return
 		}
 		var v authorizationToken
-		json.Unmarshal(tokenResponse.GetHttpContentBytes(), &v)
+		err = json.Unmarshal(tokenResponse.GetHttpContentBytes(), &v)
+		if err != nil {
+			return
+		}
 		a.cacheTokenExpiredAt = v.Data.ExpireDate.ToTime()
 		a.cacheToken.user = v.Data.TempUserName
 		a.cacheToken.password = v.Data.AuthorizationToken
@@ -70,7 +88,7 @@ func (a *aliyunAuthCredential) Modify(r *http.Request) (err error) {
 }
 
 func (a *aliyunAuthCredential) isCacheTokenValid() bool {
-	if &a.cacheTokenExpiredAt == nil {
+	if a.cacheTokenExpiredAt.IsZero() {
 		return false
 	}
 	if a.cacheToken == nil {

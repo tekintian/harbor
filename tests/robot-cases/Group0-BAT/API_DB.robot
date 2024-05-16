@@ -16,10 +16,13 @@ ${SERVER_API_ENDPOINT}  ${SERVER_URL}/api
 &{SERVER_CONFIG}  endpoint=${SERVER_API_ENDPOINT}  verify_ssl=False
 
 *** Test Cases ***
-
 Test Case - Garbage Collection
     [Tags]  gc
     Harbor API Test  ./tests/apitests/python/test_garbage_collection.py
+
+Test Case - Quota Sorting
+    [Tags]  quota_sorting
+    Harbor API Test  ./tests/apitests/python/test_quota_sorting.py
 
 Test Case - Add Private Project Member and Check User Can See It
     [Tags]  private_member
@@ -49,10 +52,6 @@ Test Case - User View Logs
     [Tags]  view_logs
     Harbor API Test  ./tests/apitests/python/test_user_view_logs.py
 
-Test Case - List Helm Charts
-    [Tags]  list_helm_charts
-    Harbor API Test  ./tests/apitests/python/test_list_helm_charts.py
-
 Test Case - Assign Sys Admin
     [Tags]  assign_adin
     Harbor API Test  ./tests/apitests/python/test_assign_sys_admin.py
@@ -64,10 +63,6 @@ Test Case - Copy Artifact Outside Project
 Test Case - Robot Account
     [Tags]  robot_account
     Harbor API Test  ./tests/apitests/python/test_robot_account.py
-
-Test Case - Sign A Image
-    [Tags]  sign_image
-    Harbor API Test  ./tests/apitests/python/test_sign_image.py
 
 Test Case - Project Quota
     [Tags]  quota
@@ -93,9 +88,9 @@ Test Case - Push Index By Docker Manifest
     [Tags]  push_index
     Harbor API Test  ./tests/apitests/python/test_push_index_by_docker_manifest.py
 
-Test Case - Push Chart By Helm3 Chart CLI
-    [Tags]  push_chart
-    Harbor API Test  ./tests/apitests/python/test_push_chart_by_helm3_chart_cli.py
+Test Case - Push Chart By Helm Chart CLI
+    [Tags]  push_chart_by_helm
+    Harbor API Test  ./tests/apitests/python/test_push_chart_by_helm_chart_cli.py
 
 Test Case - Push Cnab Bundle
     [Tags]  push_cnab
@@ -117,6 +112,14 @@ Test Case - Scan All Images
     [Tags]  scan_all
     Harbor API Test  ./tests/apitests/python/test_system_level_scan_all.py
 
+Test Case - Stop Scan Image
+    [Tags]  stop_scan
+    Harbor API Test  ./tests/apitests/python/test_stop_scan_image_artifact.py
+
+Test Case - Stop Scan All Images
+    [Tags]  stop_scan_all
+    Harbor API Test  ./tests/apitests/python/test_system_level_stop_scan_all.py
+
 Test Case - Registry API
     [Tags]  reg_api
     Harbor API Test  ./tests/apitests/python/test_registry_api.py
@@ -128,14 +131,6 @@ Test Case - Push Image With Special Name
 Test Case - Push Artifact With ORAS CLI
     [Tags]  oras
     Harbor API Test  ./tests/apitests/python/test_push_files_by_oras.py
-
-Test Case - Push Singularity file With Singularity CLI
-    [Tags]  singularity
-    Harbor API Test  ./tests/apitests/python/test_push_sif_by_singularity.py
-
-Test Case - Push Chart File To Chart Repository By Helm V2 With Robot Account
-    [Tags]  helm2
-    Harbor API Test  ./tests/apitests/python/test_push_chart_by_helm2_helm3_with_robot_Account.py
 
 Test Case - Replication From Dockerhub
     [Tags]  replic_dockerhub
@@ -160,3 +155,62 @@ Test Case - Metrics
 Test Case - Project Level Policy Content Trust
     [Tags]  content_trust
     Harbor API Test  ./tests/apitests/python/test_project_level_policy_content_trust.py
+
+Test Case - Webhook CRUD
+    [Tags]  webhook
+    Harbor API Test  ./tests/apitests/python/test_webhook_crud.py
+
+Test Case - Cosign Sign Artifact
+    [Tags]  cosign
+    Harbor API Test  ./tests/apitests/python/test_cosign_sign_artifact.py
+
+Test Case - Notation Sign Artifact
+    [Tags]  notation
+    Harbor API Test  ./tests/apitests/python/test_notation_sign_artifact.py
+
+Test Case - Log Rotation
+    [Tags]  log_rotation
+    Harbor API Test  ./tests/apitests/python/test_log_rotation.py
+
+Test Case - Log Forward
+    [Tags]  log_forward
+    ${SYSLOG_ENDPOINT_VALUE}=  Get Variable Value  ${SYSLOG_ENDPOINT}  ${EMPTY}
+    ${ES_ENDPOINT_VALUE}=  Get Variable Value  ${ES_ENDPOINT}  ${EMPTY}
+    Skip If  '${SYSLOG_ENDPOINT_VALUE}' == '${EMPTY}' or '${ES_ENDPOINT_VALUE}' == '${EMPTY}'
+    Harbor API Test  ./tests/apitests/python/test_audit_log_forward.py  SYSLOG_ENDPOINT=${SYSLOG_ENDPOINT_VALUE} ES_ENDPOINT=${ES_ENDPOINT_VALUE}
+
+Test Case - Scan Data Export
+    [Tags]  scan_data_export
+    Harbor API Test  ./tests/apitests/python/test_scan_data_export.py
+
+Test Case - Job Service Dashboard
+    [Tags]  job_service_dashboard
+    Harbor API Test  ./tests/apitests/python/test_job_service_dashboard.py
+
+Test Case - Retain Image Last Pull Time
+    [Tags]  retain_image_last_pull_time
+    Harbor API Test  ./tests/apitests/python/test_retain_image_last_pull_time.py
+
+Test Case - Referrers API
+    [Tags]  referrers
+    Harbor API Test  ./tests/apitests/python/test_referrers_api.py
+
+Test Case - Podman Pull And Push To Harbor
+    [Tags]  podman_pull_push
+    Harbor API Test  ./tests/apitests/python/test_podman_pull_push.py
+
+Test Case - Security Hub
+    [Tags]  security_hub
+    Harbor API Test  ./tests/apitests/python/test_security_hub.py
+
+Test Case - Banner Message
+    [Tags]  banner_message
+    Harbor API Test  ./tests/apitests/python/test_banner_message.py
+
+Test Case - User CRUD
+    [Tags]  user_crud
+    Harbor API Test  ./tests/apitests/python/test_user_crud.py
+
+Test Case - Limited Guest GetRepository
+    [Tags]  limited_guest_getrepository
+    Harbor API Test  ./tests/apitests/python/test_user_limited_guest_get_repository.py

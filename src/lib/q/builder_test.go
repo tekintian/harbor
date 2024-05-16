@@ -15,10 +15,12 @@
 package q
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseFuzzyMatchValue(t *testing.T) {
@@ -75,6 +77,7 @@ func TestParseRange(t *testing.T) {
 	// valid value
 	value = "[~2]"
 	v, err = parseRange(value)
+	require.NoError(t, err)
 	assert.Equal(t, int64(2), v.Max.(int64))
 	assert.Nil(t, v.Min)
 
@@ -263,4 +266,61 @@ func TestParseKeywords(t *testing.T) {
 	keywords, err = parseKeywords(q)
 	require.Nil(t, err)
 	assert.Equal(t, "tags=nil", keywords["q"].(string))
+}
+
+func TestParseSorting(t *testing.T) {
+	testCases := []struct {
+		description string
+		sortQuery   string
+		expectRet   []*Sort
+	}{
+		{
+			description: "sortQuery is empty",
+			sortQuery:   "",
+			expectRet:   []*Sort{},
+		},
+		{
+			description: "ascending without the hyphen",
+			sortQuery:   "key1",
+			expectRet: []*Sort{
+				{
+					Key:  "key1",
+					DESC: false,
+				},
+			},
+		},
+		{
+			description: "descending with the hyphen",
+			sortQuery:   "-key1",
+			expectRet: []*Sort{
+				{
+					Key:  "key1",
+					DESC: true,
+				},
+			},
+		},
+		{
+			description: "ascending without the hyphen and descending with hyphen",
+			sortQuery:   "key1,-key2",
+			expectRet: []*Sort{
+				{
+					Key:  "key1",
+					DESC: false,
+				},
+				{
+					Key:  "key2",
+					DESC: true,
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			got := ParseSorting(tc.sortQuery)
+			if !reflect.DeepEqual(got, tc.expectRet) {
+				t.Errorf("ParseSorting() = %#v, want %#v", got, tc.expectRet)
+			}
+		})
+	}
 }

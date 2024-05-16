@@ -1,27 +1,31 @@
 package notification
 
 import (
-	mockjobservice "github.com/goharbor/harbor/src/testing/jobservice"
-	"github.com/stretchr/testify/assert"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	mockjobservice "github.com/goharbor/harbor/src/testing/jobservice"
 )
 
 func TestMaxFails(t *testing.T) {
 	rep := &WebhookJob{}
-	// test default max fails
-	assert.Equal(t, uint(10), rep.MaxFails())
+	t.Run("default max fails", func(t *testing.T) {
+		assert.Equal(t, uint(3), rep.MaxFails())
+	})
 
-	// test user defined max fails
-	_ = os.Setenv(maxFails, "15")
-	assert.Equal(t, uint(15), rep.MaxFails())
+	t.Run("user defined max fails", func(t *testing.T) {
+		t.Setenv(maxFails, "15")
+		assert.Equal(t, uint(15), rep.MaxFails())
+	})
 
-	// test user defined wrong max fails
-	_ = os.Setenv(maxFails, "abc")
-	assert.Equal(t, uint(10), rep.MaxFails())
+	t.Run("user defined wrong max fails", func(t *testing.T) {
+		t.Setenv(maxFails, "abc")
+		assert.Equal(t, uint(3), rep.MaxFails())
+	})
 }
 
 func TestShouldRetry(t *testing.T) {
@@ -45,7 +49,7 @@ func TestRun(t *testing.T) {
 	// test webhook request
 	ts := httptest.NewServer(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			body, _ := ioutil.ReadAll(r.Body)
+			body, _ := io.ReadAll(r.Body)
 
 			// test request method
 			assert.Equal(t, http.MethodPost, r.Method)
@@ -59,7 +63,7 @@ func TestRun(t *testing.T) {
 		"skip_cert_verify": true,
 		"payload":          `{"key": "value"}`,
 		"address":          ts.URL,
-		"auth_header":      "auth_test",
+		"header":           `{"Authorization": ["auth_test"]}`,
 	}
 	// test correct webhook response
 	assert.Nil(t, rep.Run(ctx, params))
@@ -73,7 +77,7 @@ func TestRun(t *testing.T) {
 		"skip_cert_verify": true,
 		"payload":          `{"key": "value"}`,
 		"address":          tsWrong.URL,
-		"auth_header":      "auth_test",
+		"header":           `{"Authorization": ["auth_test"]}`,
 	}
 	// test incorrect webhook response
 	assert.NotNil(t, rep.Run(ctx, paramsWrong))

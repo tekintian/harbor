@@ -26,24 +26,39 @@ import (
 	"github.com/docker/distribution/manifest/manifestlist"
 	"github.com/docker/distribution/manifest/schema1"
 	"github.com/docker/distribution/manifest/schema2"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+
 	common_http "github.com/goharbor/harbor/src/common/http"
 	trans "github.com/goharbor/harbor/src/controller/replication/transfer"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/reg/adapter"
 	"github.com/goharbor/harbor/src/pkg/reg/model"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 var (
-	retry      int
-	errStopped = errors.New("stopped")
+	blobRetryCnt, chunkRetryCnt int
+	replicationChunkSize        int64
+	errStopped                  = errors.New("stopped")
+	// default chunk size is 10MB
+	defaultChunkSize = 10 * 1024 * 1024
 )
 
 func init() {
-	retry, _ = strconv.Atoi(os.Getenv("COPY_BLOB_RETRY_COUNT"))
-	if retry <= 0 {
-		retry = 5
+	blobRetryCnt, _ = strconv.Atoi(os.Getenv("COPY_BLOB_RETRY_COUNT"))
+	if blobRetryCnt <= 0 {
+		blobRetryCnt = 5
 	}
+
+	chunkRetryCnt, _ = strconv.Atoi(os.Getenv("COPY_CHUNK_RETRY_COUNT"))
+	if chunkRetryCnt <= 0 {
+		chunkRetryCnt = 5
+	}
+
+	replicationChunkSize, _ = strconv.ParseInt(os.Getenv("REPLICATION_CHUNK_SIZE"), 10, 64)
+	if replicationChunkSize <= 0 {
+		replicationChunkSize = int64(defaultChunkSize)
+	}
+
 	if err := trans.RegisterFactory(model.ResourceTypeImage, factory); err != nil {
 		log.Errorf("failed to register transfer factory: %v", err)
 	}
@@ -71,7 +86,7 @@ type transfer struct {
 	dst       adapter.ArtifactRegistry
 }
 
-func (t *transfer) Transfer(src *model.Resource, dst *model.Resource) error {
+func (t *transfer) Transfer(src *model.Resource, dst *model.Resource, opts *trans.Options) error {
 	// initialize
 	if err := t.initialize(src, dst); err != nil {
 		return err
@@ -88,7 +103,7 @@ func (t *transfer) Transfer(src *model.Resource, dst *model.Resource) error {
 	}
 
 	// copy the repository from source registry to the destination
-	return t.copy(t.convert(src), t.convert(dst), dst.Override)
+	return t.copy(t.convert(src), t.convert(dst), dst.Override, opts)
 }
 
 func (t *transfer) convert(resource *model.Resource) *repository {
@@ -161,14 +176,18 @@ func (t *transfer) shouldStop() bool {
 	return isStopped
 }
 
-func (t *transfer) copy(src *repository, dst *repository, override bool) error {
+func (t *transfer) copy(src *repository, dst *repository, override bool, opts *trans.Options) error {
 	srcRepo := src.repository
 	dstRepo := dst.repository
 	t.logger.Infof("copying %s:[%s](source registry) to %s:[%s](destination registry)...",
 		srcRepo, strings.Join(src.tags, ","), dstRepo, strings.Join(dst.tags, ","))
+	if opts.Speed > 0 {
+		t.logger.Infof("limit network speed at %d kb/s", opts.Speed)
+	}
+
 	var err error
 	for i := range src.tags {
-		if e := t.copyArtifact(srcRepo, src.tags[i], dstRepo, dst.tags[i], override); e != nil {
+		if e := t.copyArtifact(srcRepo, src.tags[i], dstRepo, dst.tags[i], override, opts); e != nil {
 			if e == errStopped {
 				return nil
 			}
@@ -187,7 +206,7 @@ func (t *transfer) copy(src *repository, dst *repository, override bool) error {
 	return nil
 }
 
-func (t *transfer) copyArtifact(srcRepo, srcRef, dstRepo, dstRef string, override bool) error {
+func (t *transfer) copyArtifact(srcRepo, srcRef, dstRepo, dstRef string, override bool, opts *trans.Options) error {
 	t.logger.Infof("copying %s:%s(source registry) to %s:%s(destination registry)...",
 		srcRepo, srcRef, dstRepo, dstRef)
 	// pull the manifest from the source registry
@@ -221,7 +240,7 @@ func (t *transfer) copyArtifact(srcRepo, srcRef, dstRepo, dstRef string, overrid
 
 	// copy contents between the source and destination registries
 	for _, content := range manifest.References() {
-		if err = t.copyContent(content, srcRepo, dstRepo); err != nil {
+		if err = t.copyContent(content, srcRepo, dstRepo, opts); err != nil {
 			return err
 		}
 	}
@@ -237,7 +256,7 @@ func (t *transfer) copyArtifact(srcRepo, srcRef, dstRepo, dstRef string, overrid
 }
 
 // copy the content from source registry to destination according to its media type
-func (t *transfer) copyContent(content distribution.Descriptor, srcRepo, dstRepo string) error {
+func (t *transfer) copyContent(content distribution.Descriptor, srcRepo, dstRepo string, opts *trans.Options) error {
 	digest := content.Digest.String()
 	switch content.MediaType {
 	// when the media type of pulled manifest is index,
@@ -246,7 +265,7 @@ func (t *transfer) copyContent(content distribution.Descriptor, srcRepo, dstRepo
 		v1.MediaTypeImageManifest, schema2.MediaTypeManifest,
 		schema1.MediaTypeSignedManifest, schema1.MediaTypeManifest:
 		// as using digest as the reference, so set the override to true directly
-		return t.copyArtifact(srcRepo, digest, dstRepo, digest, true)
+		return t.copyArtifact(srcRepo, digest, dstRepo, digest, true, opts)
 	// handle foreign layer
 	case schema2.MediaTypeForeignLayer:
 		t.logger.Infof("the layer %s is a foreign layer, skip", digest)
@@ -255,19 +274,24 @@ func (t *transfer) copyContent(content distribution.Descriptor, srcRepo, dstRepo
 	// the media type of the layer or config can be "application/octet-stream",
 	// schema1.MediaTypeManifestLayer, schema2.MediaTypeLayer, schema2.MediaTypeImageConfig
 	default:
-		return t.copyBlobWithRetry(srcRepo, dstRepo, digest, content.Size)
+		if opts.CopyByChunk {
+			// copy by chunk
+			return t.copyChunkWithRetry(srcRepo, dstRepo, digest, content.Size, opts.Speed)
+		}
+		// copy by blob
+		return t.copyBlobWithRetry(srcRepo, dstRepo, digest, content.Size, opts.Speed)
 	}
 }
 
-func (t *transfer) copyBlobWithRetry(srcRepo, dstRepo, digest string, sizeFromDescriptor int64) error {
+func (t *transfer) copyBlobWithRetry(srcRepo, dstRepo, digest string, sizeFromDescriptor int64, speed int32) error {
 	var err error
-	for i, backoff := 1, 2*time.Second; i <= retry; i, backoff = i+1, backoff*2 {
+	for i, backoff := 1, 2*time.Second; i <= blobRetryCnt; i, backoff = i+1, backoff*2 {
 		t.logger.Infof("copying the blob %s(the %dth running)...", digest, i)
-		if err = t.copyBlob(srcRepo, dstRepo, digest, sizeFromDescriptor); err == nil {
+		if err = t.copyBlob(srcRepo, dstRepo, digest, sizeFromDescriptor, speed); err == nil {
 			t.logger.Infof("copy the blob %s completed", digest)
 			return nil
 		}
-		if i == retry || err == errStopped {
+		if i == blobRetryCnt || err == errStopped {
 			break
 		}
 		t.logger.Infof("will retry %v later", backoff)
@@ -276,40 +300,87 @@ func (t *transfer) copyBlobWithRetry(srcRepo, dstRepo, digest string, sizeFromDe
 	return err
 }
 
-// copy the layer or artifact config from the source registry to destination
-// the size parameter is taken from manifests.
-func (t *transfer) copyBlob(srcRepo, dstRepo, digest string, sizeFromDescriptor int64) error {
+func (t *transfer) copyChunkWithRetry(srcRepo, dstRepo, digest string, sizeFromDescriptor int64, speed int32) error {
+	var (
+		err      error
+		location string
+
+		start int64 = -1
+		end   int64 = -1
+	)
+
+	for i, backoff := 1, 2*time.Second; i <= chunkRetryCnt; i, backoff = i+1, backoff*2 {
+		t.logger.Infof("copying the blob %s by chunk(chunkSize: %d)(the %dth running)...", digest, replicationChunkSize, i)
+		if err = t.copyBlobByChunk(srcRepo, dstRepo, digest, sizeFromDescriptor, &start, &end, &location, speed); err == nil {
+			t.logger.Infof("copy the blob %s by chunk completed", digest)
+			return nil
+		}
+		if i == chunkRetryCnt || err == errStopped {
+			break
+		}
+		t.logger.Infof("will retry %v later", backoff)
+		time.Sleep(backoff)
+	}
+
+	return err
+}
+
+// tryMountBlob try to check existence and mount, return true if mounted.
+func (t *transfer) tryMountBlob(_, dstRepo, digest string) (bool, error) {
 	if t.shouldStop() {
-		return errStopped
+		return false, errStopped
 	}
 	exist, err := t.dst.BlobExist(dstRepo, digest)
 	if err != nil {
 		t.logger.Errorf("failed to check the existence of blob %s on the destination registry: %v", digest, err)
-		return err
+		return false, err
 	}
 	if exist {
 		t.logger.Infof("the blob %s already exists on the destination registry, skip", digest)
-		return nil
+		// we think the blob is mounted if it is existed.
+		return true, nil
 	}
 
 	mount, repository, err := t.dst.CanBeMount(digest)
 	if err != nil {
 		t.logger.Errorf("failed to check whether the blob %s can be mounted on the destination registry: %v", digest, err)
-		return err
+		return false, err
 	}
 	if mount {
 		if err = t.dst.MountBlob(repository, digest, dstRepo); err != nil {
 			t.logger.Errorf("failed to mount the blob %s on the destination registry: %v", digest, err)
-			return err
+			return false, err
 		}
 		t.logger.Infof("the blob %s mounted from the repository %s on the destination registry directly", digest, repository)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// copy the layer or artifact config from the source registry to destination
+// the size parameter is taken from manifests.
+func (t *transfer) copyBlob(srcRepo, dstRepo, digest string, sizeFromDescriptor int64, speed int32) error {
+	mounted, err := t.tryMountBlob(srcRepo, dstRepo, digest)
+	if err != nil {
+		return err
+	}
+	// return earlier if it is mounted
+	if mounted {
 		return nil
 	}
 
+	return t.copyBlobByMonolithic(srcRepo, dstRepo, digest, sizeFromDescriptor, speed)
+}
+
+func (t *transfer) copyBlobByMonolithic(srcRepo, dstRepo, digest string, sizeFromDescriptor int64, speed int32) error {
 	size, data, err := t.src.PullBlob(srcRepo, digest)
 	if err != nil {
 		t.logger.Errorf("failed to pulling the blob %s: %v", digest, err)
 		return err
+	}
+	if speed > 0 {
+		data = trans.NewReader(data, speed)
 	}
 	defer data.Close()
 	// get size 0 from PullBlob, use size from distribution.Descriptor instead.
@@ -318,10 +389,73 @@ func (t *transfer) copyBlob(srcRepo, dstRepo, digest string, sizeFromDescriptor 
 		t.logger.Debugf("the blob size from remote registry is 0, use size %d from manifests instead", size)
 	}
 
+	t.logger.Debugf("the blob size is %d bytes", size)
+
 	if err = t.dst.PushBlob(dstRepo, digest, size, data); err != nil {
 		t.logger.Errorf("failed to pushing the blob %s, size %d: %v", digest, size, err)
 		return err
 	}
+
+	return nil
+}
+
+// copyBlobByChunk copy blob by chunk with specified start and end range.
+// The <range> refers to the byte range of the chunk, and MUST be inclusive on both ends. The first chunk's range MUST begin with 0.
+func (t *transfer) copyBlobByChunk(srcRepo, dstRepo, digest string, sizeFromDescriptor int64, start, end *int64, location *string, speed int32) error {
+	// fallback to copy by monolithic if the blob size is equal or less than chunk size.
+	if sizeFromDescriptor <= replicationChunkSize {
+		return t.copyBlobByMonolithic(srcRepo, dstRepo, digest, sizeFromDescriptor, speed)
+	}
+
+	mounted, err := t.tryMountBlob(srcRepo, dstRepo, digest)
+	if err != nil {
+		return err
+	}
+	// return earlier if it is mounted.
+	if mounted {
+		return nil
+	}
+
+	// end range should equal (blobSize - 1)
+	endRange := sizeFromDescriptor - 1
+	for {
+		// update the start and end for upload
+		*start = *end + 1
+		// since both ends are closed intervals, it is necessary to subtract one byte
+		*end = *start + replicationChunkSize - 1
+		if *end >= endRange {
+			*end = endRange
+		}
+
+		t.logger.Infof("copying the blob chunk: %d-%d/%d", *start, *end, sizeFromDescriptor)
+		_, data, err := t.src.PullBlobChunk(srcRepo, digest, sizeFromDescriptor, *start, *end)
+		if err != nil {
+			t.logger.Errorf("failed to pulling the blob chunk: %d-%d/%d, error: %v", *start, *end, sizeFromDescriptor, err)
+			return err
+		}
+
+		if speed > 0 {
+			data = trans.NewReader(data, speed)
+		}
+		// failureEnd will only be used for adjusting content range when issue happened during push the chunk.
+		var failureEnd int64
+		*location, failureEnd, err = t.dst.PushBlobChunk(dstRepo, digest, sizeFromDescriptor, data, *start, *end, *location)
+		if err != nil {
+			t.logger.Errorf("failed to pushing the blob chunk: %d-%d/%d, error: %v", *start, *end, sizeFromDescriptor, err)
+			data.Close()
+			*end = failureEnd
+			return err
+		}
+
+		data.Close()
+
+		t.logger.Infof("copy the blob chunk: %d-%d/%d completed", *start, *end, sizeFromDescriptor)
+		// if the end equals (blobSize-1), that means it is last chunk, return if this is the last chunk
+		if *end == endRange {
+			break
+		}
+	}
+
 	return nil
 }
 

@@ -16,9 +16,9 @@ package server
 
 import (
 	"encoding/json"
-	lib_http "github.com/goharbor/harbor/src/lib/http"
 	"net/http"
 
+	lib_http "github.com/goharbor/harbor/src/lib/http"
 	"github.com/goharbor/harbor/src/server/v2.0/route"
 )
 
@@ -32,7 +32,7 @@ type APIVersion struct {
 }
 
 // GetAPIVersion returns the current supported API version
-func GetAPIVersion(w http.ResponseWriter, r *http.Request) {
+func GetAPIVersion(w http.ResponseWriter, _ *http.Request) {
 	if err := json.NewEncoder(w).Encode(&APIVersion{Version: version}); err != nil {
 		lib_http.SendError(w, err)
 	}

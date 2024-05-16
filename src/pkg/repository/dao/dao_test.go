@@ -17,19 +17,21 @@ package dao
 import (
 	"context"
 	"fmt"
-	beegoorm "github.com/astaxie/beego/orm"
+	"testing"
+	"time"
+
+	beegoorm "github.com/beego/beego/v2/client/orm"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/suite"
+
 	common_dao "github.com/goharbor/harbor/src/common/dao"
-	"github.com/goharbor/harbor/src/common/models"
 	"github.com/goharbor/harbor/src/lib/errors"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	af_dao "github.com/goharbor/harbor/src/pkg/artifact/dao"
+	"github.com/goharbor/harbor/src/pkg/repository/model"
 	tag_dao "github.com/goharbor/harbor/src/pkg/tag/dao"
 	"github.com/goharbor/harbor/src/pkg/tag/model/tag"
-	v1 "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/stretchr/testify/suite"
-	"testing"
-	"time"
 )
 
 var (
@@ -54,7 +56,7 @@ func (d *daoTestSuite) SetupSuite() {
 }
 
 func (d *daoTestSuite) SetupTest() {
-	repository := &models.RepoRecord{
+	repository := &model.RepoRecord{
 		Name:        repository,
 		ProjectID:   1,
 		Description: "",
@@ -126,7 +128,7 @@ func (d *daoTestSuite) TestCreate() {
 	// the happy pass case is covered in Setup
 
 	// conflict
-	repository := &models.RepoRecord{
+	repository := &model.RepoRecord{
 		Name:      repository,
 		ProjectID: 1,
 	}
@@ -148,7 +150,7 @@ func (d *daoTestSuite) TestDelete() {
 
 func (d *daoTestSuite) TestUpdate() {
 	// pass
-	err := d.dao.Update(d.ctx, &models.RepoRecord{
+	err := d.dao.Update(d.ctx, &model.RepoRecord{
 		RepositoryID: d.id,
 		PullCount:    1,
 	}, "PullCount")
@@ -160,7 +162,7 @@ func (d *daoTestSuite) TestUpdate() {
 	d.Equal(int64(1), repository.PullCount)
 
 	// not exist
-	err = d.dao.Update(d.ctx, &models.RepoRecord{
+	err = d.dao.Update(d.ctx, &model.RepoRecord{
 		RepositoryID: 10000,
 	})
 	d.Require().NotNil(err)
@@ -170,7 +172,7 @@ func (d *daoTestSuite) TestUpdate() {
 }
 
 func (d *daoTestSuite) TestAddPullCount() {
-	repository := &models.RepoRecord{
+	repository := &model.RepoRecord{
 		Name:        "test/pullcount",
 		ProjectID:   10,
 		Description: "test pull count",
@@ -179,7 +181,7 @@ func (d *daoTestSuite) TestAddPullCount() {
 	id, err := d.dao.Create(d.ctx, repository)
 	d.Require().Nil(err)
 
-	err = d.dao.AddPullCount(d.ctx, id)
+	err = d.dao.AddPullCount(d.ctx, id, 1)
 	d.Require().Nil(err)
 
 	repository, err = d.dao.Get(d.ctx, id)
@@ -191,7 +193,7 @@ func (d *daoTestSuite) TestAddPullCount() {
 }
 
 func (d *daoTestSuite) TestNonEmptyRepos() {
-	repository := &models.RepoRecord{
+	repository := &model.RepoRecord{
 		Name:        "TestNonEmptyRepos",
 		ProjectID:   10,
 		Description: "test pull count",

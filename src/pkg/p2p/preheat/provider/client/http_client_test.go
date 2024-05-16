@@ -19,8 +19,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider/auth"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/goharbor/harbor/src/pkg/p2p/preheat/provider/auth"
 )
 
 // HTTPClientTestSuite is a test suite for testing the HTTP client.
@@ -42,6 +43,11 @@ func (suite *HTTPClientTestSuite) SetupSuite() {
 		if len(a) == 0 {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
+		}
+
+		// set http status code if needed
+		if r.URL.String() == "/statusCode" {
+			w.WriteHeader(http.StatusAlreadyReported)
 		}
 
 		w.Header().Add("Content-type", "application/json")
@@ -98,4 +104,7 @@ func (suite *HTTPClientTestSuite) TestPost() {
 	data, err := c.Post(suite.ts.URL, cred, []byte("{}"), map[string]string{"Accept": "application/json"})
 	suite.NoError(err, "post data")
 	suite.Equal("{}", string(data), "post json data")
+
+	data, err = c.Post(suite.ts.URL+"/statusCode", cred, []byte("{}"), map[string]string{"Accept": "application/json"})
+	suite.Error(err, "post data")
 }

@@ -1,7 +1,7 @@
 .result-row {
   position: relative;
 }
-
+/* stylelint-disable */
 .rightPos{
   position: absolute;
   z-index: 100;
@@ -17,41 +17,48 @@
 .center {
   align-items: center;
 }
-.label-critical {
-  background:red;
-  color:#621501;
-}
 
+.label-critical {
+  background:#ff4d2e;
+  color:#000;
+}
 
 .label-danger {
-  background:#e64524!important;
-  color:#621501!important;
+  background:#ff8f3d!important;
+  color:#000!important;
 }
+
 .label-medium {
-  background-color: orange;
-  color:#621501;
+  background-color: #ffce66;
+  color:#000;
 }
+
 .label-low {
-  background: #007CBB;
-  color:#cab6b1;
+  background: #fff1ad;
+  color:#000;
 }
-.label-negligible {
-  background-color: green;
-  color:#bad7ba;
+
+.label-none {
+  background-color: #2ec0ff;
+  color:#000;
 }
-.label-unknown {
-  background-color: grey;
-  color:#bad7ba;
-}
+
 .no-border {
   border: none;
 }
+
 .ml-05 {
   margin-left: 0.5rem;
 }
+
 .report {
   text-align: left;
 }
+
 .mt-5px {
   margin-top: 5px;
+}
+
+.label {
+  min-width: 3rem;
 }

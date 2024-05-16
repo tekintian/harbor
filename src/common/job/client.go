@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package job
 
 import (
@@ -5,8 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/goharbor/harbor/src/lib/config"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -15,6 +28,8 @@ import (
 	"github.com/goharbor/harbor/src/common/http/modifier/auth"
 	"github.com/goharbor/harbor/src/common/job/models"
 	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/lib/config"
+	"github.com/goharbor/harbor/src/lib/log"
 )
 
 var (
@@ -34,6 +49,8 @@ type Client interface {
 	PostAction(uuid, action string) error
 	GetExecutions(uuid string) ([]job.Stats, error)
 	// TODO Redirect joblog when we see there's memory issue.
+	// GetJobServiceConfig retrieves the job config
+	GetJobServiceConfig() (*job.Config, error)
 }
 
 // StatusBehindError represents the error got when trying to stop a success/failed job
@@ -61,7 +78,7 @@ type DefaultClient struct {
 func NewDefaultClient(endpoint, secret string) *DefaultClient {
 	var c *commonhttp.Client
 	httpCli := &http.Client{
-		Transport: commonhttp.GetHTTPTransport(commonhttp.SecureTransport),
+		Transport: commonhttp.GetHTTPTransport(),
 	}
 	if len(secret) > 0 {
 		c = commonhttp.NewClient(httpCli, auth.NewSecretAuthorizer(secret))
@@ -81,12 +98,12 @@ func NewReplicationClient(endpoint, secret string) *DefaultClient {
 
 	if len(secret) > 0 {
 		c = commonhttp.NewClient(&http.Client{
-			Transport: commonhttp.GetHTTPTransport(commonhttp.SecureTransport),
+			Transport: commonhttp.GetHTTPTransport(),
 		},
 			auth.NewSecretAuthorizer(secret))
 	} else {
 		c = commonhttp.NewClient(&http.Client{
-			Transport: commonhttp.GetHTTPTransport(commonhttp.SecureTransport),
+			Transport: commonhttp.GetHTTPTransport(),
 		})
 	}
 
@@ -117,7 +134,7 @@ func (d *DefaultClient) SubmitJob(jd *models.JobData) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -146,7 +163,7 @@ func (d *DefaultClient) GetJobLog(uuid string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +188,7 @@ func (d *DefaultClient) GetExecutions(periodicJobID string) ([]job.Stats, error)
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +229,36 @@ func (d *DefaultClient) PostAction(uuid, action string) error {
 	return nil
 }
 
+// GetJobServiceConfig retrieves the job service configuration
+func (d *DefaultClient) GetJobServiceConfig() (*job.Config, error) {
+	url := d.endpoint + "/api/v1/config"
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Infof("failed to get job service config from jobservice:8080/api/v1/config, job service container version maybe mismatch")
+		return nil, &commonhttp.Error{
+			Code:    resp.StatusCode,
+			Message: string(data),
+		}
+	}
+	var config job.Config
+	err = json.Unmarshal(data, &config)
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
 func isStatusBehindError(err error) (string, bool) {
 	if err == nil {
 		return "", false

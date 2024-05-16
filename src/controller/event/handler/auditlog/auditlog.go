@@ -16,7 +16,9 @@ package auditlog
 
 import (
 	"context"
+
 	"github.com/goharbor/harbor/src/controller/event"
+	"github.com/goharbor/harbor/src/lib/config"
 	"github.com/goharbor/harbor/src/lib/log"
 	"github.com/goharbor/harbor/src/pkg/audit"
 	am "github.com/goharbor/harbor/src/pkg/audit/model"
@@ -39,10 +41,19 @@ func (h *Handler) Name() string {
 // Handle ...
 func (h *Handler) Handle(ctx context.Context, value interface{}) error {
 	var auditLog *am.AuditLog
+	var addAuditLog bool
 	switch v := value.(type) {
-	case *event.PushArtifactEvent, *event.PullArtifactEvent, *event.DeleteArtifactEvent,
+	case *event.PushArtifactEvent, *event.DeleteArtifactEvent,
 		*event.DeleteRepositoryEvent, *event.CreateProjectEvent, *event.DeleteProjectEvent,
 		*event.DeleteTagEvent, *event.CreateTagEvent:
+		addAuditLog = true
+	case *event.PullArtifactEvent:
+		addAuditLog = !config.PullAuditLogDisable(ctx)
+	default:
+		log.Errorf("Can not handler this event type! %#v", v)
+	}
+
+	if addAuditLog {
 		resolver := value.(AuditResolver)
 		al, err := resolver.ResolveToAuditLog()
 		if err != nil {
@@ -50,13 +61,11 @@ func (h *Handler) Handle(ctx context.Context, value interface{}) error {
 			return err
 		}
 		auditLog = al
-	default:
-		log.Errorf("Can not handler this event type! %#v", v)
-	}
-	if auditLog != nil {
-		_, err := audit.Mgr.Create(ctx, auditLog)
-		if err != nil {
-			log.Debugf("add audit log err: %v", err)
+		if auditLog != nil {
+			_, err := audit.Mgr.Create(ctx, auditLog)
+			if err != nil {
+				log.Debugf("add audit log err: %v", err)
+			}
 		}
 	}
 	return nil

@@ -17,7 +17,7 @@ package model
 import (
 	"time"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 )
 
 func init() {
@@ -41,6 +41,8 @@ type Policy struct {
 	ReplicateDeletion         bool      `orm:"column(replicate_deletion)"`
 	CreationTime              time.Time `orm:"column(creation_time);auto_now_add" sort:"default:desc"`
 	UpdateTime                time.Time `orm:"column(update_time);auto_now"`
+	Speed                     int32     `orm:"column(speed_kb)"`
+	CopyByChunk               bool      `orm:"column(copy_by_chunk)"`
 }
 
 // TableName set table name for ORM

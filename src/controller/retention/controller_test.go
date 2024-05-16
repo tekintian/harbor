@@ -20,8 +20,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/goharbor/harbor/src/common/dao"
 	"github.com/goharbor/harbor/src/jobservice/job"
+	"github.com/goharbor/harbor/src/lib"
 	"github.com/goharbor/harbor/src/lib/orm"
 	"github.com/goharbor/harbor/src/lib/q"
 	"github.com/goharbor/harbor/src/pkg/retention"
@@ -33,8 +37,6 @@ import (
 	"github.com/goharbor/harbor/src/testing/pkg/project"
 	"github.com/goharbor/harbor/src/testing/pkg/repository"
 	testingTask "github.com/goharbor/harbor/src/testing/pkg/task"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/suite"
 )
 
 type ControllerTestSuite struct {
@@ -60,7 +62,7 @@ func TestController(t *testing.T) {
 
 func (s *ControllerTestSuite) TestPolicy() {
 	projectMgr := &project.Manager{}
-	repositoryMgr := &repository.FakeManager{}
+	repositoryMgr := &repository.Manager{}
 	retentionScheduler := &fakeRetentionScheduler{}
 	retentionLauncher := &fakeLauncher{}
 	execMgr := &testingTask.ExecutionManager{}
@@ -159,7 +161,7 @@ func (s *ControllerTestSuite) TestPolicy() {
 		Trigger: &policy.Trigger{
 			Kind: "Schedule",
 			Settings: map[string]interface{}{
-				"cron": "* 22 11 * * *",
+				"cron": "0 22 11 * * *",
 			},
 		},
 		Scope: &policy.Scope{
@@ -196,7 +198,7 @@ func (s *ControllerTestSuite) TestPolicy() {
 
 func (s *ControllerTestSuite) TestExecution() {
 	projectMgr := &project.Manager{}
-	repositoryMgr := &repository.FakeManager{}
+	repositoryMgr := &repository.Manager{}
 	retentionScheduler := &fakeRetentionScheduler{}
 	retentionLauncher := &fakeLauncher{}
 	execMgr := &testingTask.ExecutionManager{}
@@ -237,6 +239,7 @@ func (s *ControllerTestSuite) TestExecution() {
 		projectManager: projectMgr,
 		repositoryMgr:  repositoryMgr,
 		scheduler:      retentionScheduler,
+		wp:             lib.NewWorkerPool(10),
 	}
 
 	p1 := &policy.Metadata{
@@ -270,7 +273,7 @@ func (s *ControllerTestSuite) TestExecution() {
 		Trigger: &policy.Trigger{
 			Kind: "Schedule",
 			Settings: map[string]interface{}{
-				"cron": "* 22 11 * * *",
+				"cron": "0 22 11 * * *",
 			},
 		},
 		Scope: &policy.Scope{
@@ -307,6 +310,10 @@ func (s *ControllerTestSuite) TestExecution() {
 }
 
 type fakeRetentionScheduler struct {
+}
+
+func (f *fakeRetentionScheduler) CountSchedules(ctx context.Context, query *q.Query) (int64, error) {
+	panic("implement me")
 }
 
 func (f *fakeRetentionScheduler) Schedule(ctx context.Context, vendorType string, vendorID int64, cronType string, cron string, callbackFuncName string, params interface{}, extras map[string]interface{}) (int64, error) {

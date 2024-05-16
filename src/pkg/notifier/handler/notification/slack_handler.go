@@ -1,3 +1,17 @@
+// Copyright Project Harbor Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package notification
 
 import (
@@ -6,12 +20,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"text/template"
+
 	"github.com/goharbor/harbor/src/common/job/models"
 	"github.com/goharbor/harbor/src/jobservice/job"
 	"github.com/goharbor/harbor/src/pkg/notification"
 	"github.com/goharbor/harbor/src/pkg/notifier/model"
-	"strings"
-	"text/template"
 )
 
 const (
@@ -95,7 +110,7 @@ func (s *SlackHandler) process(ctx context.Context, event *model.HookEvent) erro
 		},
 	}
 	// Create a slackJob to send message to slack
-	j.Name = job.SlackJob
+	j.Name = job.SlackJobVendorType
 
 	// Convert payload to slack format
 	payload, err := s.convert(event.Payload)
@@ -120,7 +135,7 @@ func (s *SlackHandler) convert(payLoad *model.Payload) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal from eventData %v failed: %v", payLoad.EventData, err)
 	}
-	data["EventData"] = "```" + strings.Replace(string(eventData), `"`, `\"`, -1) + "```"
+	data["EventData"] = "```" + escapeEventData(string(eventData)) + "```"
 
 	st, _ := template.New("slack").Parse(SlackBodyTemplate)
 	var slackBuf bytes.Buffer
@@ -128,4 +143,12 @@ func (s *SlackHandler) convert(payLoad *model.Payload) (string, error) {
 		return "", fmt.Errorf("%v", err)
 	}
 	return slackBuf.String(), nil
+}
+
+func escapeEventData(str string) string {
+	// escape " to \"
+	str = strings.Replace(str, `"`, `\"`, -1)
+	// escape \\" to \\\"
+	str = strings.Replace(str, `\\"`, `\\\"`, -1)
+	return str
 }
